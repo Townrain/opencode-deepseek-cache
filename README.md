@@ -1,54 +1,83 @@
 # opencode-deepseek-cache
 
-OpenCode 插件：提升 DeepSeek API 的 KV Cache 命中率。
+> 💸 **A 100-line "billing fuse" for DeepSeek API in OpenCode.**
+> 
+> 这是一个仅有 100 行代码的"账单保险丝"。我们不干涉 OpenCode 优秀的原生上下文管理，我们只做一件事：**修复 OpenCode 动态 System Prompt 导致的 DeepSeek 缓存雪崩问题。**
 
-## 为什么需要这个插件？
+---
 
-DeepSeek 的 [Context Caching](https://api-docs.deepseek.com/guides/kv_cache) 是**自动**的磁盘缓存技术，但默认情况下：
+A 100-line "billing fuse". We don't interfere with OpenCode's excellent native context management. We only do one thing: **fix the DeepSeek cache avalanche caused by OpenCode's dynamic System Prompt.**
 
-- ❌ 没有 `user_id` 时，你的请求可能与其他用户的请求混在一起，缓存命中率不稳定
-- ❌ 系统提示词中的动态内容（时间戳、临时路径等）会破坏前缀匹配
-- ❌ 你无法知道自己实际享受了多少缓存优惠
+## 🎯 这是什么？ | What Is This?
 
-**使用此插件后**：
+**零副作用的纯收益 (Zero Side-effect, Pure Profit)**
 
-- ✅ 自动注入稳定的 `user_id`，实现 KVCache 隔离，确保缓存一致性
-- ✅ 自动规范化系统提示词，移除破坏前缀匹配的动态内容
-- ✅ 实时显示缓存命中率，让你清楚知道节省了多少成本
+通过固化前缀和绑定 `user_id`，确保你的多终端、跨会话请求，永远享受 **$0.0028/1M** 的底价。附带本地持久化账单面板。
 
-## 工作原理
+By stabilizing prefixes and binding `user_id`, ensure your multi-terminal, cross-session requests always enjoy the **$0.0028/1M** floor price. Includes a local persistent billing dashboard.
 
-### DeepSeek KV Cache 机制
+## 🚨 你会多花多少冤枉钱？ | How Much Are You Overpaying?
 
-DeepSeek 的缓存系统会在以下时机自动持久化「缓存前缀单元」：
+| 场景 | Scenario | 没插件 | Without Plugin | 有插件 | With Plugin |
+|------|----------|--------|----------------|--------|-------------|
+| 重启 OpenCode | Restart OpenCode | 几千 Token 缓存失效，按 $0.14/1M 全价重算 | Thousands of tokens cache miss, charged at $0.14/1M | 缓存命中，$0.0028/1M | Cache hit, $0.0028/1M |
+| 开 3 个终端 | Open 3 terminals | 交 3 次全价 | Pay full price 3 times | 共享缓存池 | Share cache pool |
 
-1. **请求边界** — 每个请求的用户输入结束位置和模型输出结束位置
-2. **公共前缀检测** — 当系统检测到多个请求的公共前缀时
-3. **固定 Token 间隔** — 长文本每隔固定 token 数量切分
+## ✨ 我们只做三件事 | We Only Do Three Things
 
-后续请求**完全匹配**已持久化的缓存前缀单元时，即为一次 Cache Hit。
+### 1. 🛡️ 前缀防弹衣 | Prefix Stabilization
 
-### 本插件的优化策略
+**核心资产 | Core Asset**
 
-| 策略 | 原理 | 效果 |
-|------|------|------|
-| `user_id` 注入 | DeepSeek 使用 `user_id` 做 KVCache 隔离 | 同用户请求共享缓存空间，提升命中率 |
-| 系统提示词规范化 | 移除时间戳、UUID、临时路径等动态内容 | 确保不同 Session 的前缀可匹配 |
-| 缓存统计 | 追踪 `prompt_cache_hit_tokens` / `prompt_cache_miss_tokens` | 可视化缓存效果 |
+在 `system.transform` 阶段，用正则把时间戳静默替换为 `[TIME]`。无论你怎么重启，发给 DeepSeek 的前缀**永远一模一样**。
 
-## 安装
+In the `system.transform` phase, silently replace timestamps with `[TIME]`. No matter how many times you restart, the prefix sent to DeepSeek is **always identical**.
+
+**价值 | Value**: 保住每次重启时，基础工具定义缓存的 **98% 折扣**。防止单次请求成本瞬间暴涨 50 倍。
+
+Preserve **98% discount** on base tool definitions every restart. Prevent 50x cost spikes on single requests.
+
+### 2. 🔗 项目级缓存池 | Project-level Pooling
+
+**锚点 | Anchor**
+
+基于项目路径生成稳定的 `user_id`。终端 A、B、C 共享同一个 DeepSeek KV Cache 池。终端 A 缓存了 System Prompt，终端 B 直接白嫖。
+
+Generate stable `user_id` based on project path. Terminals A, B, C share the same DeepSeek KV Cache pool. Terminal A caches System Prompt, Terminal B gets it for free.
+
+**价值 | Value**: 多任务并发场景下，拒绝向 DeepSeek 重复缴纳全价过路费。
+
+In multi-task scenarios, refuse to pay full price to DeepSeek repeatedly.
+
+### 3. 📊 财务级账本 | Financial-grade Ledger
+
+**账本 | Ledger**
+
+本地 JSONL 持久化记录 `prompt_cache_hit_tokens`。重启 10 次，账本依然在累加。`/cache-stats` 面板让你清清楚楚看到："今天白嫖了 50 万 Token，省了 $0.07"。
+
+Local JSONL persistent recording of `prompt_cache_hit_tokens`. Restart 10 times, ledger keeps accumulating. `/cache-stats` panel shows clearly: "Freed 500k tokens today, saved $0.07".
+
+**价值 | Value**: 情绪价值 + 对账能力。
+
+Emotional value + reconciliation capability.
+
+## ⚠️ 我们不做什么 | What We Don't Do
+
+**本插件不包含任何"滑动窗口"或"消息截断"功能。**
+
+**This plugin does NOT include any "sliding window" or "message truncation" features.**
+
+OpenCode 原生的 Compaction 机制已经足够优秀。我们不教 OpenCode 做事。
+
+OpenCode's native Compaction mechanism is already excellent. We don't teach OpenCode how to work.
+
+## 📦 安装 | Installation
 
 ```bash
 npm install opencode-deepseek-cache
-# 或
-bun install opencode-deepseek-cache
-# 或
-pnpm install opencode-deepseek-cache
 ```
 
-## 配置
-
-### 1. 在 `opencode.json` 中添加插件
+## ⚙️ 配置 | Configuration
 
 ```json
 {
@@ -57,46 +86,37 @@ pnpm install opencode-deepseek-cache
 }
 ```
 
-### 2. （可选）设置环境变量
+## 🛠️ 使用 | Usage
 
-| 变量名 | 说明 | 默认值 |
-|--------|------|--------|
-| `DEEPSEEK_CACHE_DEBUG` | 启用调试日志 | `false` |
-| `DEEPSEEK_CACHE_TOAST` | 在 TUI 中显示缓存统计 | `true` |
-| `DEEPSEEK_CACHE_USER_ID_PREFIX` | 自定义 user_id 前缀 | 空 |
+安装后插件会在后台静默工作 | Once installed, the plugin works silently:
+
+- ✅ 注入稳定的 `user_id` | Injects stable `user_id`
+- ✅ 替换时间戳/UUID 为占位符 | Replaces timestamps/UUIDs with placeholders
+
+输入 `/cache-stats` 查看账本 | Type `/cache-stats` to view ledger:
+
+```text
+### 📊 DeepSeek Cache Dashboard
+
+| 核心指标 | 状态 |
+| :--- | :--- |
+| **缓存命中率** | 🟢 **82.3%** |
+| **命中 Tokens** | `128,450` |
+| **未命中 Tokens** | `27,600` |
+| **累计请求数** | 47 |
+| **预估节省** | 💰 **$0.017612** |
+```
+
+> 📁 统计数据保存在 `.opencode/deepseek-cache-usage.jsonl`，重启不丢失。
+> 
+> Statistics are saved to `.opencode/deepseek-cache-usage.jsonl` and persist across restarts.
+
+## 🐛 调试模式 | Debug Mode
 
 ```bash
 export DEEPSEEK_CACHE_DEBUG=true
-export DEEPSEEK_CACHE_USER_ID_PREFIX="my-team"
 ```
 
-## 效果展示
-
-在 OpenCode TUI 中，每次会话结束后会显示缓存统计：
-
-```
-🔷 DeepSeek Cache: 98.6% hit rate | 12,450 hit / 180 miss tokens
-```
-
-## 支持模型
-
-- DeepSeek V4 Flash (`deepseek-v4-flash`)
-- DeepSeek V4 Pro (`deepseek-v4-pro`)
-- 以及未来所有 DeepSeek Chat 模型
-
-## 注意事项
-
-- DeepSeek 缓存是「尽力而为」的，不保证 100% 命中率
-- 缓存构建需要几秒钟，初次请求可能无缓存命中
-- 缓存闲置几小时到几天后会自动清除
-- 本插件只对 DeepSeek provider 生效，不影响其他模型
-
-## 参考
-
-- [DeepSeek Context Caching 文档](https://api-docs.deepseek.com/guides/kv_cache)
-- [DeepSeek API 参考](https://api-docs.deepseek.com/api/create-chat-completion)
-- [OpenCode 插件文档](https://opencode.ai/docs/plugins/)
-
-## 许可证
+## License
 
 MIT
