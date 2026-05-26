@@ -75,7 +75,7 @@ OpenCode's native Compaction mechanism is already excellent. We don't teach Open
 
 ## 📦 安装 | Installation
 
-### 方式 1：从 GitHub 安装（推荐）
+### 从 GitHub 安装（推荐）
 
 ```bash
 # npm
@@ -85,11 +85,7 @@ npm install github:Townrain/opencode-deepseek-cache
 bun install github:Townrain/opencode-deepseek-cache
 ```
 
-### 方式 2：从 npm 安装（如果已发布）
 
-```bash
-npm install opencode-deepseek-cache
-```
 
 ## ⚙️ 配置 | Configuration
 
