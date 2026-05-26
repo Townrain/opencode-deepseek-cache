@@ -4,6 +4,8 @@
 > 
 > 这是一个仅有 100 行代码的"账单保险丝"。我们不干涉 OpenCode 优秀的原生上下文管理，我们只做一件事：**修复 OpenCode 动态 System Prompt 导致的 DeepSeek 缓存雪崩问题。**
 
+[![GitHub](https://img.shields.io/badge/GitHub-Townrain%2Fopencode--deepseek--cache-blue)](https://github.com/Townrain/opencode-deepseek-cache)
+
 ---
 
 A 100-line "billing fuse". We don't interfere with OpenCode's excellent native context management. We only do one thing: **fix the DeepSeek cache avalanche caused by OpenCode's dynamic System Prompt.**
@@ -73,6 +75,18 @@ OpenCode's native Compaction mechanism is already excellent. We don't teach Open
 
 ## 📦 安装 | Installation
 
+### 方式 1：从 GitHub 安装（推荐）
+
+```bash
+# npm
+npm install github:Townrain/opencode-deepseek-cache
+
+# bun
+bun install github:Townrain/opencode-deepseek-cache
+```
+
+### 方式 2：从 npm 安装（如果已发布）
+
 ```bash
 npm install opencode-deepseek-cache
 ```
@@ -120,3 +134,7 @@ export DEEPSEEK_CACHE_DEBUG=true
 ## License
 
 MIT
+
+---
+
+**GitHub**: https://github.com/Townrain/opencode-deepseek-cache
