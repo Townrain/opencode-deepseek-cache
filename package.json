@@ -1,0 +1,39 @@
+{
+  "name": "opencode-deepseek-cache",
+  "version": "1.0.0",
+  "description": "OpenCode plugin to boost DeepSeek API cache hit rate via user_id injection, prefix optimization, and cache analytics",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "opencode",
+    "deepseek",
+    "cache",
+    "prompt-caching",
+    "kv-cache",
+    "plugin",
+    "cache-hit"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@opencode-ai/plugin": "latest",
+    "@opencode-ai/sdk": "latest"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "typescript": "^5.7.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Townrain/opencode-deepseek-cache.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Townrain/opencode-deepseek-cache/issues"
+  },
+  "homepage": "https://github.com/Townrain/opencode-deepseek-cache#readme"
+}
