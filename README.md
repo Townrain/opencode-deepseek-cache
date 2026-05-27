@@ -1,91 +1,112 @@
 # opencode-deepseek-cache
 
-> 💸 **A 100-line "billing fuse" for DeepSeek API in OpenCode.**
+> 💸 **A production-grade "billing fuse" for DeepSeek API in OpenCode.**
 > 
-> 这是一个仅有 100 行代码的"账单保险丝"。我们不干涉 OpenCode 优秀的原生上下文管理，我们只做一件事：**修复 OpenCode 动态 System Prompt 导致的 DeepSeek 缓存雪崩问题。**
-
-[![GitHub](https://img.shields.io/badge/GitHub-Townrain%2Fopencode--deepseek--cache-blue)](https://github.com/Townrain/opencode-deepseek-cache)
+> 借鉴 [Reasonix](https://github.com/esengine/DeepSeek-Reasonix) 的「字节级稳定性」哲学，通过 SHA-256 指纹追踪和动态内容正则替换，死死锁住 DeepSeek 的严格前缀匹配。零副作用，纯收益。
 
 ---
 
-A 100-line "billing fuse". We don't interfere with OpenCode's excellent native context management. We only do one thing: **fix the DeepSeek cache avalanche caused by OpenCode's dynamic System Prompt.**
+Inspired by [Reasonix](https://github.com/esengine/DeepSeek-Reasonix)'s "byte-level stability" philosophy. Uses SHA-256 fingerprint tracking and dynamic content regex replacement to lock down DeepSeek's strict prefix matching. Zero side-effects, pure profit.
 
-## 🎯 这是什么？ | What Is This?
+---
 
-**零副作用的纯收益 (Zero Side-effect, Pure Profit)**
+## 🎯 核心卖点 | Core Value Propositions
 
-通过固化前缀和绑定 `user_id`，确保你的多终端、跨会话请求，永远享受 **$0.0028/1M** 的底价。附带本地持久化账单面板。
+### 1. 🛡️ 字节级前缀固化 | Byte-level Prefix Stabilization
 
-By stabilizing prefixes and binding `user_id`, ensure your multi-terminal, cross-session requests always enjoy the **$0.0028/1M** floor price. Includes a local persistent billing dashboard.
+**灵感来源 | Inspiration**: Reasonix 的 `ImmutablePrefix` 机制
 
-## 🚨 你会多花多少冤枉钱？ | How Much Are You Overpaying?
+DeepSeek 的前缀缓存是**字节级匹配**的——哪怕 System Prompt 中有一个时间戳不同，整个前缀缓存就会失效，成本瞬间暴涨 **50 倍**（$0.0028/1M → $0.14/1M）。
 
-| 场景 | Scenario | 没插件 | Without Plugin | 有插件 | With Plugin |
-|------|----------|--------|----------------|--------|-------------|
-| 重启 OpenCode | Restart OpenCode | 几千 Token 缓存失效，按 $0.14/1M 全价重算 | Thousands of tokens cache miss, charged at $0.14/1M | 缓存命中，$0.0028/1M | Cache hit, $0.0028/1M |
-| 开 3 个终端 | Open 3 terminals | 交 3 次全价 | Pay full price 3 times | 共享缓存池 | Share cache pool |
+DeepSeek's prefix cache uses **byte-level matching** — if even one timestamp differs in the System Prompt, the entire prefix cache is invalidated, causing a **50x cost spike** ($0.0028/1M → $0.14/1M).
 
-## ✨ 我们只做三件事 | We Only Do Three Things
+**我们的解决方案 | Our Solution**:
 
-### 1. 🛡️ 前缀防弹衣 | Prefix Stabilization
+```typescript
+// 在 system.transform 阶段，静默替换所有动态内容
+DYNAMIC_PATTERNS = [
+  [ISO 8601 时间戳] → [TIME]
+  [UUID]           → [ID]
+  [日期字符串]     → [DATE]
+  [版本号]         → [VERSION]
+  [临时路径]       → [TEMP]
+  [进程ID路径]     → [PID]
+]
+```
 
-**核心资产 | Core Asset**
+配合 SHA-256 指纹追踪，每次请求都会检测前缀是否变化。如果指纹变了，日志会立即警告：`⚠️ Prefix fingerprint changed — cache miss expected`。
 
-在 `system.transform` 阶段，用正则把时间戳静默替换为 `[TIME]`。无论你怎么重启，发给 DeepSeek 的前缀**永远一模一样**。
+Combined with SHA-256 fingerprint tracking, every request checks if the prefix has changed. If the fingerprint changes, the log immediately warns: `⚠️ Prefix fingerprint changed — cache miss expected`.
 
-In the `system.transform` phase, silently replace timestamps with `[TIME]`. No matter how many times you restart, the prefix sent to DeepSeek is **always identical**.
+**价值 | Value**: 无论重启多少次、跨多少天，发给 DeepSeek 的前缀**永远字节级一致**。保住每次重启时基础工具定义缓存的 **98% 折扣**。
 
-**价值 | Value**: 保住每次重启时，基础工具定义缓存的 **98% 折扣**。防止单次请求成本瞬间暴涨 50 倍。
+No matter how many restarts or days pass, the prefix sent to DeepSeek is **always byte-identical**. Preserves the **98% discount** on base tool definitions every restart.
 
-Preserve **98% discount** on base tool definitions every restart. Prevent 50x cost spikes on single requests.
+---
 
-### 2. 🔗 项目级缓存池 | Project-level Pooling
+### 2. 🔗 跨终端缓存池化 | Cross-Terminal Cache Pooling
 
-**锚点 | Anchor**
+```typescript
+// 基于项目路径生成确定性 user_id
+const projectHash = createHash("md5").update(projectPath).digest("hex").slice(0, 16)
+const stableUserId = `opencode-${projectHash}`
+```
 
-基于项目路径生成稳定的 `user_id`。终端 A、B、C 共享同一个 DeepSeek KV Cache 池。终端 A 缓存了 System Prompt，终端 B 直接白嫖。
+同一个项目，开 3 个终端（前端、后端、测试），它们共享同一个 DeepSeek KV Cache 池。终端 A 缓存了 System Prompt，终端 B 和 C 直接命中。
 
-Generate stable `user_id` based on project path. Terminals A, B, C share the same DeepSeek KV Cache pool. Terminal A caches System Prompt, Terminal B gets it for free.
+Same project, 3 terminals (frontend, backend, testing) — they share the same DeepSeek KV Cache pool. Terminal A caches the System Prompt, Terminals B and C hit it directly.
 
 **价值 | Value**: 多任务并发场景下，拒绝向 DeepSeek 重复缴纳全价过路费。
 
 In multi-task scenarios, refuse to pay full price to DeepSeek repeatedly.
 
-### 3. 📊 财务级账本 | Financial-grade Ledger
+---
 
-**账本 | Ledger**
+### 3. 📊 财务级成本对冲面板 | Financial-grade Cost Hedging
 
-本地 JSONL 持久化记录 `prompt_cache_hit_tokens`。重启 10 次，账本依然在累加。`/cache-stats` 面板让你清清楚楚看到："今天白嫖了 50 万 Token，省了 $0.07"。
+不仅记录你省了多少钱，更通过**「实际花费 vs 无缓存花费」**的直观对比，展示插件的投资回报率（ROI）。
 
-Local JSONL persistent recording of `prompt_cache_hit_tokens`. Restart 10 times, ledger keeps accumulating. `/cache-stats` panel shows clearly: "Freed 500k tokens today, saved $0.07".
+Not just recording how much you saved, but showing the plugin's ROI through a直观 comparison of **"actual cost vs hypothetical cost without cache"**.
 
-**价值 | Value**: 情绪价值 + 对账能力。
+```text
+### 📊 DeepSeek Cache Dashboard
 
-Emotional value + reconciliation capability.
+| 核心指标 | 状态 |
+| :--- | :--- |
+| **缓存命中率** | 🟢 **99.8%** |
+| **命中 Tokens** | `435,033,856` |
+| **未命中 Tokens** | `767,616` |
+| **实际花费** | $1.38 |
+| **无缓存花费** | $61.06 |
+| **节省金额** | 💰 **$59.68** |
+| **节省比例** | 97.7% |
+| **前缀变化** | 0 次 |
+| **当前指纹** | `a1b2c3d4e5f67890` |
+```
+
+**价值 | Value**: 用真实数据告诉用户：「如果没有这个插件，你本来要花 $61.06，现在只花了 $1.38」。
+
+Tell users with real data: "Without this plugin, you would have spent $61.06. Now you only spent $1.38."
+
+---
 
 ## ⚠️ 我们不做什么 | What We Don't Do
 
-**本插件不包含任何"滑动窗口"或"消息截断"功能。**
+**本插件不包含任何「滑动窗口」、「消息截断」或「自动折叠」功能。**
 
-**This plugin does NOT include any "sliding window" or "message truncation" features.**
+**This plugin does NOT include any "sliding window", "message truncation", or "auto-compaction" features.**
 
-OpenCode 原生的 Compaction 机制已经足够优秀。我们不教 OpenCode 做事。
+OpenCode 原生的 Compaction 机制已经足够优秀。我们不教 OpenCode 做事。Messages 的管理完全信任宿主。
 
-OpenCode's native Compaction mechanism is already excellent. We don't teach OpenCode how to work.
+OpenCode's native Compaction mechanism is already excellent. We don't teach OpenCode how to work. Messages management is fully entrusted to the host.
+
+---
 
 ## 📦 安装 | Installation
 
-### 从 GitHub 安装（推荐）
-
 ```bash
-# npm
-npm install github:Townrain/opencode-deepseek-cache
-
-# bun
-bun install github:Townrain/opencode-deepseek-cache
+npm install opencode-deepseek-cache
 ```
-
-
 
 ## ⚙️ 配置 | Configuration
 
@@ -101,21 +122,10 @@ bun install github:Townrain/opencode-deepseek-cache
 安装后插件会在后台静默工作 | Once installed, the plugin works silently:
 
 - ✅ 注入稳定的 `user_id` | Injects stable `user_id`
-- ✅ 替换时间戳/UUID 为占位符 | Replaces timestamps/UUIDs with placeholders
+- ✅ 替换时间戳/UUID/日期/版本/路径为占位符 | Replaces timestamps/UUIDs/dates/versions/paths with placeholders
+- ✅ 追踪前缀指纹变化 | Tracks prefix fingerprint changes
 
-输入 `/cache-stats` 查看账本 | Type `/cache-stats` to view ledger:
-
-```text
-### 📊 DeepSeek Cache Dashboard
-
-| 核心指标 | 状态 |
-| :--- | :--- |
-| **缓存命中率** | 🟢 **82.3%** |
-| **命中 Tokens** | `128,450` |
-| **未命中 Tokens** | `27,600` |
-| **累计请求数** | 47 |
-| **预估节省** | 💰 **$0.017612** |
-```
+输入 `/cache-stats` 查看成本对冲面板 | Type `/cache-stats` to view cost hedging dashboard:
 
 > 📁 统计数据保存在 `.opencode/deepseek-cache-usage.jsonl`，重启不丢失。
 > 
@@ -127,10 +137,16 @@ bun install github:Townrain/opencode-deepseek-cache
 export DEEPSEEK_CACHE_DEBUG=true
 ```
 
+## 🧠 灵感来源 | Inspiration
+
+本插件的「字节级前缀固化」机制，深度借鉴了 [Reasonix](https://github.com/esengine/DeepSeek-Reasonix) 框架在 DeepSeek 缓存优化上的卓越设计。
+
+我们提取了 Reasonix 的核心灵魂——`ImmutablePrefix`（不可变前缀）——并将其适配到 OpenCode 插件架构中。
+
+The "byte-level prefix stabilization" mechanism in this plugin is deeply inspired by [Reasonix](https://github.com/esengine/DeepSeek-Reasonix)'s excellent design for DeepSeek cache optimization.
+
+We extracted Reasonix's core soul — `ImmutablePrefix` — and adapted it to the OpenCode plugin architecture.
+
 ## License
 
 MIT
-
----
-
-**GitHub**: https://github.com/Townrain/opencode-deepseek-cache
