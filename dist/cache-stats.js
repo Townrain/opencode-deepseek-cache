@@ -72,7 +72,7 @@ export function createCacheStats() {
         lastRequestTime: null,
     };
 }
-export function getCacheReport(stats, currentFingerprint) {
+export function getCacheReport(stats, currentFingerprint, balance) {
     const total = stats.totalHitTokens + stats.totalMissTokens;
     const hitRate = total > 0 ? ((stats.totalHitTokens / total) * 100).toFixed(1) : "0.0";
     const savedCost = (stats.totalHitTokens / 1_000_000) * (DEEPSEEK_PRICES.cacheMiss - DEEPSEEK_PRICES.cacheHit);
@@ -89,6 +89,7 @@ export function getCacheReport(stats, currentFingerprint) {
 
 | 核心指标 | 状态 |
 | :--- | :--- |
+${balance ? `| **账户余额** | 💵 $${Number(balance.total_balance).toFixed(2)} ${balance.currency} |` : ""}
 | **缓存命中率** | ${statusIcon} **${hitRate}%** |
 | **命中 Tokens** | \`${stats.totalHitTokens.toLocaleString()}\` |
 | **未命中 Tokens** | \`${stats.totalMissTokens.toLocaleString()}\` |

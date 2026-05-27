@@ -1,6 +1,7 @@
 import { DEEPSEEK_PRICES } from "./constants.js"
 import { appendFileSync, readFileSync, existsSync, mkdirSync } from "fs"
 import { dirname } from "path"
+import type { BalanceInfo } from "./client.js"
 
 export interface CacheStats {
   totalHitTokens: number
@@ -103,7 +104,7 @@ export function createCacheStats(): CacheStats {
   }
 }
 
-export function getCacheReport(stats: CacheStats, currentFingerprint?: string): string {
+export function getCacheReport(stats: CacheStats, currentFingerprint?: string, balance?: BalanceInfo | null): string {
   const total = stats.totalHitTokens + stats.totalMissTokens
   const hitRate = total > 0 ? ((stats.totalHitTokens / total) * 100).toFixed(1) : "0.0"
   const savedCost =
@@ -126,6 +127,7 @@ export function getCacheReport(stats: CacheStats, currentFingerprint?: string): 
 
 | 核心指标 | 状态 |
 | :--- | :--- |
+${balance ? `| **账户余额** | 💵 $${Number(balance.total_balance).toFixed(2)} ${balance.currency} |` : ""}
 | **缓存命中率** | ${statusIcon} **${hitRate}%** |
 | **命中 Tokens** | \`${stats.totalHitTokens.toLocaleString()}\` |
 | **未命中 Tokens** | \`${stats.totalMissTokens.toLocaleString()}\` |

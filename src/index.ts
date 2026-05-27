@@ -6,7 +6,7 @@ import { log, getLogPath } from "./logger.js"
 import { normalizeSystemPrompt } from "./system-transform.js"
 import { loadStatsFromJsonl, appendUsageToJsonl, getCacheReport } from "./cache-stats.js"
 import { createFingerprintTracker } from "./fingerprint.js"
-
+import { getBalance, type BalanceInfo } from "./client.js"
 const DeepSeekCachePlugin: Plugin = async (ctx) => {
   // JSONL file path in project's .opencode directory
   const projectPath = ctx.directory || process.cwd()
@@ -18,6 +18,8 @@ const DeepSeekCachePlugin: Plugin = async (ctx) => {
   // Fingerprint tracker for prefix stability monitoring
   const fingerprintTracker = createFingerprintTracker()
 
+  // Cached balance info (updated on session.idle events)
+  let cachedBalance: BalanceInfo | null = null
   try {
     // Generate stable user_id from project path (SHA-256 for consistency with fingerprint.ts)
     const projectHash = createHash("sha256").update(projectPath).digest("hex").slice(0, 16)
@@ -48,7 +50,7 @@ const DeepSeekCachePlugin: Plugin = async (ctx) => {
           if (input.command === "cache-stats") {
             log("Intercepted /cache-stats command")
             const currentFp = fingerprintTracker.getLastFingerprint()
-            const report = getCacheReport(stats, currentFp ?? undefined)
+            const report = getCacheReport(stats, currentFp ?? undefined, cachedBalance)
             // HACK: as any[] because the hook's type doesn't explicitly support this pattern
             output.parts = [{
               type: "text",
@@ -116,10 +118,24 @@ const DeepSeekCachePlugin: Plugin = async (ctx) => {
       // OpenCode's native Compaction mechanism handles context management
       // Our sliding window would conflict with it
 
-      // Event handler for cache statistics
+      // Event handler for cache statistics + balance refresh
       event: async ({ event }) => {
         try {
           if (event.type !== "session.idle") return
+
+          // Refresh balance on each session.idle (non-blocking)
+          void (async () => {
+            try {
+              const balance = await getBalance(process.env.DEEPSEEK_API_KEY ?? "", "https://api.deepseek.com")
+              if (balance) {
+                cachedBalance = balance
+                log("Balance refreshed", { total: balance.total_balance, currency: balance.currency })
+              }
+            } catch (err) {
+              // Balance fetch failure is non-critical
+              log("Balance fetch failed (non-critical)", { error: String(err) })
+            }
+          })()
 
           // TypeScript can narrow the type after the type check above
           // EventSessionIdle has properties.sessionID as required field
@@ -130,9 +146,9 @@ const DeepSeekCachePlugin: Plugin = async (ctx) => {
           const timeout = 5000
           const response = await Promise.race([
             ctx.client.session.get({ path: { id: sessionID } }),
-            new Promise((_, reject) =>
+            new Promise<never>((_, reject) =>
               setTimeout(() => reject(new Error("session.get timeout")), timeout)
-            ),
+            ).catch(() => {}), // Swallow rejection if session.get wins the race
           ]) as any
 
           if (response.error || !response.data) return
@@ -204,7 +220,7 @@ const DeepSeekCachePlugin: Plugin = async (ctx) => {
           args: {},
           async execute() {
             try {
-              return getCacheReport(stats)
+              return getCacheReport(stats, undefined, cachedBalance)
             } catch (err) {
               log("ERROR in cacheStats", { error: String(err) })
               return "Error generating report"

@@ -1,3 +1,4 @@
+import type { BalanceInfo } from "./client.js";
 export interface CacheStats {
     totalHitTokens: number;
     totalMissTokens: number;
@@ -18,5 +19,5 @@ export declare function loadStatsFromJsonl(jsonlPath: string): CacheStats;
  */
 export declare function appendUsageToJsonl(jsonlPath: string, hitTokens: number, missTokens: number, fingerprint?: string): void;
 export declare function createCacheStats(): CacheStats;
-export declare function getCacheReport(stats: CacheStats, currentFingerprint?: string): string;
+export declare function getCacheReport(stats: CacheStats, currentFingerprint?: string, balance?: BalanceInfo | null): string;
 //# sourceMappingURL=cache-stats.d.ts.map
