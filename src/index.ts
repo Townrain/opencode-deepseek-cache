@@ -5,6 +5,7 @@ import { tool } from "@opencode-ai/plugin"
 import { log, getLogPath } from "./logger.js"
 import { normalizeSystemPrompt } from "./system-transform.js"
 import { loadStatsFromJsonl, appendUsageToJsonl, getCacheReport } from "./cache-stats.js"
+import { createFingerprintTracker } from "./fingerprint.js"
 
 const DeepSeekCachePlugin: Plugin = async (ctx) => {
   // JSONL file path in project's .opencode directory
@@ -14,13 +15,15 @@ const DeepSeekCachePlugin: Plugin = async (ctx) => {
   // Load historical stats from JSONL (survives restarts)
   const stats = loadStatsFromJsonl(jsonlPath)
 
+  // Fingerprint tracker for prefix stability monitoring
+  const fingerprintTracker = createFingerprintTracker()
+
   try {
-    // Generate stable user_id from project path
-    const projectHash = createHash("md5").update(projectPath).digest("hex").slice(0, 16)
+    // Generate stable user_id from project path (SHA-256 for consistency with fingerprint.ts)
+    const projectHash = createHash("sha256").update(projectPath).digest("hex").slice(0, 16)
     const stableUserId = `opencode-${projectHash}`
 
     log("=== Plugin Loaded ===", { projectPath, stableUserId, logPath: getLogPath() })
-
     return {
       // Register custom command /cache-stats
       config: async (config: any) => {
@@ -37,11 +40,16 @@ const DeepSeekCachePlugin: Plugin = async (ctx) => {
       },
 
       // Intercept /cache-stats command execution
+      // HACK: output.parts assignment relies on OpenCode's internal behavior.
+      // The hook's type signature doesn't guarantee this will short-circuit the LLM call.
+      // If OpenCode changes how command.execute.before handles output.parts, this will fail silently.
       "command.execute.before": async (input, output) => {
         try {
           if (input.command === "cache-stats") {
             log("Intercepted /cache-stats command")
-            const report = getCacheReport(stats)
+            const currentFp = fingerprintTracker.getLastFingerprint()
+            const report = getCacheReport(stats, currentFp ?? undefined)
+            // HACK: as any[] because the hook's type doesn't explicitly support this pattern
             output.parts = [{
               type: "text",
               text: report,
@@ -54,6 +62,10 @@ const DeepSeekCachePlugin: Plugin = async (ctx) => {
       },
 
       // Core 1: Inject stable user_id for cross-terminal cache pooling
+      // HACK: output.options.user_id relies on OpenCode passing this through to DeepSeek's API.
+      // The hook's type signature shows output.options is Record<string, any>, but there's no
+      // guarantee that OpenCode will forward user_id to the provider. If OpenCode changes how
+      // it handles provider-specific options, this injection will fail silently.
       "chat.params": async (input, output) => {
         try {
           // Only apply to DeepSeek models
@@ -72,15 +84,34 @@ const DeepSeekCachePlugin: Plugin = async (ctx) => {
       },
 
       // Core 2: System prompt normalization to prevent cache avalanche
-      "experimental.chat.system.transform": async (_input, output) => {
+      // Enhanced from Reasonix ImmutablePrefix with fingerprint tracking
+      "experimental.chat.system.transform": async (input, output) => {
         try {
-          normalizeSystemPrompt(output.system)
-          log("system.transform completed")
+          const result = normalizeSystemPrompt(output.system)
+          
+          // Track fingerprint changes
+          const fpResult = fingerprintTracker.compute(result.fingerprint)
+          
+          if (result.changed) {
+            log("System prompt normalized", {
+              replacements: result.replacements,
+              fingerprint: result.fingerprint,
+              prefixChanged: fpResult.changed,
+              previousFingerprint: fpResult.previous,
+            })
+          }
+          
+          if (fpResult.changed) {
+            stats.prefixChanges++
+            log("⚠️ Prefix fingerprint changed — cache miss expected", {
+              previous: fpResult.previous,
+              current: fpResult.fingerprint,
+            })
+          }
         } catch (err) {
           log("ERROR in system.transform", { error: String(err) })
         }
       },
-
       // NOTE: messages.transform is intentionally NOT used
       // OpenCode's native Compaction mechanism handles context management
       // Our sliding window would conflict with it
@@ -90,7 +121,9 @@ const DeepSeekCachePlugin: Plugin = async (ctx) => {
         try {
           if (event.type !== "session.idle") return
 
-          const sessionID = (event as any).properties?.sessionID
+          // TypeScript can narrow the type after the type check above
+          // EventSessionIdle has properties.sessionID as required field
+          const sessionID = (event as { type: string; properties?: { sessionID?: string } }).properties?.sessionID
           if (!sessionID) return
 
           // Fetch session data with timeout
@@ -114,9 +147,24 @@ const DeepSeekCachePlugin: Plugin = async (ctx) => {
           if (!tokens) return
 
           const hitTokens = tokens.cache?.read ?? 0
-          // tokens.input is already pure miss tokens (non-cached input)
-          // OpenCode's getUsage() subtracts cache tokens from inputTokens
+          // DEFENSIVE: tokens.input semantics depend on OpenCode's getUsage() implementation.
+          // Currently: tokens.input = total input - cache hit tokens (pure miss tokens).
+          // If OpenCode changes this semantics, our stats will be incorrect.
+          // We validate by checking if input + cache hit <= total input tokens.
           const missTokens = tokens.input ?? 0
+
+          // Sanity check: hit + miss should not exceed total input tokens
+          // If it does, the token semantics may have changed
+          const totalInput = tokens.inputTotal ?? (hitTokens + missTokens)
+          if (hitTokens + missTokens > totalInput * 1.1) {
+            // Allow 10% tolerance for rounding
+            log("⚠️ Token count anomaly detected — OpenCode token semantics may have changed", {
+              hitTokens,
+              missTokens,
+              totalInput,
+              modelID,
+            })
+          }
 
           if (hitTokens === 0 && missTokens === 0) return
 
@@ -124,15 +172,25 @@ const DeepSeekCachePlugin: Plugin = async (ctx) => {
           stats.totalHitTokens += hitTokens
           stats.totalMissTokens += missTokens
           stats.requestCount++
+          
+          // Update time tracking
+          const now = Date.now()
+          if (!stats.firstRequestTime) stats.firstRequestTime = now
+          stats.lastRequestTime = now
 
-          // Persist to JSONL (survives restarts)
-          appendUsageToJsonl(jsonlPath, hitTokens, missTokens)
+          // Persist to JSONL with fingerprint (survives restarts)
+          const currentFp = fingerprintTracker.getLastFingerprint()
+          appendUsageToJsonl(jsonlPath, hitTokens, missTokens, currentFp ?? undefined)
 
+          // Avoid NaN% when both hit and miss are 0
+          const total = stats.totalHitTokens + stats.totalMissTokens
+          const rate = total > 0 ? ((stats.totalHitTokens / total) * 100).toFixed(1) + "%" : "0.0%"
           log("Recorded usage", {
             hitTokens,
             missTokens,
             requests: stats.requestCount,
-            rate: ((stats.totalHitTokens / (stats.totalHitTokens + stats.totalMissTokens)) * 100).toFixed(1) + "%"
+            rate,
+            fingerprint: currentFp,
           })
         } catch (err) {
           log("ERROR in event handler", { error: String(err) })

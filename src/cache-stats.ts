@@ -1,18 +1,25 @@
 import { DEEPSEEK_PRICES } from "./constants.js"
 import { appendFileSync, readFileSync, existsSync, mkdirSync } from "fs"
-import { join, dirname } from "path"
+import { dirname } from "path"
 
 export interface CacheStats {
   totalHitTokens: number
   totalMissTokens: number
   requestCount: number
+  /** Prefix fingerprint changes (cache misses due to prefix drift) */
+  prefixChanges: number
+  /** Timestamp of first request */
+  firstRequestTime: number | null
+  /** Timestamp of last request */
+  lastRequestTime: number | null
 }
 
-// JSONL record format
+// JSONL record format — enhanced with fingerprint tracking
 interface UsageRecord {
   t: number    // timestamp
   hit: number  // cache hit tokens
   miss: number // cache miss tokens
+  fp?: string  // prefix fingerprint (optional, for tracking stability)
 }
 
 /**
@@ -26,6 +33,7 @@ export function loadStatsFromJsonl(jsonlPath: string): CacheStats {
 
     const content = readFileSync(jsonlPath, "utf-8")
     const lines = content.split("\n").filter(line => line.trim())
+    let lastFingerprint: string | null = null
 
     for (const line of lines) {
       try {
@@ -33,6 +41,17 @@ export function loadStatsFromJsonl(jsonlPath: string): CacheStats {
         stats.totalHitTokens += record.hit ?? 0
         stats.totalMissTokens += record.miss ?? 0
         stats.requestCount++
+        
+        // Track prefix changes
+        if (record.fp && lastFingerprint && record.fp !== lastFingerprint) {
+          stats.prefixChanges++
+        }
+        if (record.fp) lastFingerprint = record.fp
+        
+        // Track time range — defensive: record.t could be undefined if JSONL is corrupted
+        const t = typeof record.t === "number" ? record.t : Date.now()
+        if (!stats.firstRequestTime) stats.firstRequestTime = t
+        stats.lastRequestTime = t
       } catch {
         continue
       }
@@ -50,7 +69,8 @@ export function loadStatsFromJsonl(jsonlPath: string): CacheStats {
 export function appendUsageToJsonl(
   jsonlPath: string,
   hitTokens: number,
-  missTokens: number
+  missTokens: number,
+  fingerprint?: string
 ): void {
   try {
     // Ensure directory exists
@@ -63,6 +83,7 @@ export function appendUsageToJsonl(
       t: Date.now(),
       hit: hitTokens,
       miss: missTokens,
+      ...(fingerprint ? { fp: fingerprint } : {}),
     }
 
     appendFileSync(jsonlPath, JSON.stringify(record) + "\n", "utf-8")
@@ -76,16 +97,29 @@ export function createCacheStats(): CacheStats {
     totalHitTokens: 0,
     totalMissTokens: 0,
     requestCount: 0,
+    prefixChanges: 0,
+    firstRequestTime: null,
+    lastRequestTime: null,
   }
 }
 
-export function getCacheReport(stats: CacheStats): string {
+export function getCacheReport(stats: CacheStats, currentFingerprint?: string): string {
   const total = stats.totalHitTokens + stats.totalMissTokens
   const hitRate = total > 0 ? ((stats.totalHitTokens / total) * 100).toFixed(1) : "0.0"
   const savedCost =
     (stats.totalHitTokens / 1_000_000) * (DEEPSEEK_PRICES.cacheMiss - DEEPSEEK_PRICES.cacheHit)
+  const actualCost =
+    (stats.totalHitTokens / 1_000_000) * DEEPSEEK_PRICES.cacheHit +
+    (stats.totalMissTokens / 1_000_000) * DEEPSEEK_PRICES.cacheMiss
+  const hypotheticalCost =
+    (total / 1_000_000) * DEEPSEEK_PRICES.cacheMiss
 
   const statusIcon = Number(hitRate) >= 70 ? "🟢" : Number(hitRate) >= 30 ? "🟡" : "🔴"
+
+  // Session duration
+  const duration = stats.firstRequestTime && stats.lastRequestTime
+    ? Math.round((stats.lastRequestTime - stats.firstRequestTime) / 1000 / 60)
+    : null
 
   return `
 ### 📊 DeepSeek Cache Dashboard
@@ -96,8 +130,16 @@ export function getCacheReport(stats: CacheStats): string {
 | **命中 Tokens** | \`${stats.totalHitTokens.toLocaleString()}\` |
 | **未命中 Tokens** | \`${stats.totalMissTokens.toLocaleString()}\` |
 | **累计请求数** | ${stats.requestCount} |
-| **预估节省** | 💰 **$${savedCost.toFixed(6)}** |
+| **实际花费** | $${actualCost.toFixed(6)} |
+| **无缓存花费** | $${hypotheticalCost.toFixed(6)} |
+| **节省金额** | 💰 **$${savedCost.toFixed(6)}** |
+| **节省比例** | ${hypotheticalCost > 0 ? ((savedCost / hypotheticalCost) * 100).toFixed(1) : "0.0"}% |
+${stats.prefixChanges > 0 ? `| **前缀变化** | ⚠️ ${stats.prefixChanges} 次 |` : ""}
+${duration !== null ? `| **会话时长** | ${duration} 分钟 |` : ""}
+${currentFingerprint ? `| **当前指纹** | \`${currentFingerprint}\` |` : ""}
 
-> 💡 **优化提示**：命中部分按 $0.0028/1M 计费，未命中按 $0.14/1M 计费。保持 \`user_id\` 稳定以获得跨会话缓存收益。
+> 💡 **优化提示**：命中部分按 $0.0028/1M 计费，未命中按 $0.14/1M 计费。
+> 保持 \`user_id\` 稳定以获得跨会话缓存收益。
+> 前缀变化次数越少，缓存命中率越高。
 `.trim()
 }
