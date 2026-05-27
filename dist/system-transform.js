@@ -8,8 +8,8 @@
  * Note: In-place mutation is acceptable here because experimental.chat.system.transform
  * is designed for this purpose — OpenCode expects the array to be modified.
  */
-import { DYNAMIC_PATTERNS } from "./constants.js";
-import { computeFingerprint } from "./fingerprint.js";
+import { DYNAMIC_PATTERNS } from './constants.js';
+import { computeFingerprint } from './fingerprint.js';
 /**
  * Normalize system prompt by replacing dynamic content with stable placeholders.
  *
@@ -19,12 +19,12 @@ import { computeFingerprint } from "./fingerprint.js";
 export function normalizeSystemPrompt(system) {
     // Guard against null/undefined system parameter
     if (!Array.isArray(system) || system.length === 0) {
-        return { changed: false, replacements: 0, fingerprint: "" };
+        return { changed: false, replacements: 0, fingerprint: '' };
     }
     let totalReplacements = 0;
-    const before = system.join("");
+    const before = system.join('');
     for (let i = 0; i < system.length; i++) {
-        if (typeof system[i] !== "string")
+        if (typeof system[i] !== 'string')
             continue;
         for (const [pattern, replacement] of DYNAMIC_PATTERNS) {
             // Reset regex lastIndex for global patterns
@@ -36,7 +36,7 @@ export function normalizeSystemPrompt(system) {
             }
         }
     }
-    const after = system.join("");
+    const after = system.join('');
     const changed = before !== after;
     const fingerprint = computeFingerprint(after);
     return { changed, replacements: totalReplacements, fingerprint };
@@ -48,7 +48,7 @@ export function normalizeSystemPrompt(system) {
 export function needsNormalization(system) {
     if (!Array.isArray(system) || system.length === 0)
         return false;
-    const combined = system.join("");
+    const combined = system.join('');
     for (const [pattern] of DYNAMIC_PATTERNS) {
         pattern.lastIndex = 0;
         if (pattern.test(combined))

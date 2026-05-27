@@ -1,4 +1,4 @@
-import type { BalanceInfo } from "./client.js";
+import type { BalanceInfo } from './client.js';
 export interface CacheStats {
     totalHitTokens: number;
     totalMissTokens: number;

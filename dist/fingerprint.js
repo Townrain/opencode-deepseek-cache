@@ -4,15 +4,12 @@
  * Tracks whether the system prompt has changed between turns.
  * When the fingerprint changes, it indicates a cache miss is likely.
  */
-import { createHash } from "crypto";
-import { FINGERPRINT_LENGTH } from "./constants.js";
+import { createHash } from 'node:crypto';
+import { FINGERPRINT_LENGTH } from './constants.js';
 export function createFingerprintTracker() {
     let lastFingerprint = null;
     function computeHash(system) {
-        return createHash("sha256")
-            .update(system)
-            .digest("hex")
-            .slice(0, FINGERPRINT_LENGTH);
+        return createHash('sha256').update(system).digest('hex').slice(0, FINGERPRINT_LENGTH);
     }
     return {
         compute(system) {
@@ -28,7 +25,7 @@ export function createFingerprintTracker() {
         hasChanged(system) {
             const current = computeHash(system);
             return lastFingerprint !== null && lastFingerprint !== current;
-        }
+        },
     };
 }
 /**
@@ -36,9 +33,6 @@ export function createFingerprintTracker() {
  * Returns first N hex chars of SHA-256 hash.
  */
 export function computeFingerprint(system) {
-    return createHash("sha256")
-        .update(system)
-        .digest("hex")
-        .slice(0, FINGERPRINT_LENGTH);
+    return createHash('sha256').update(system).digest('hex').slice(0, FINGERPRINT_LENGTH);
 }
 //# sourceMappingURL=fingerprint.js.map

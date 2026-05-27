@@ -1,12 +1,12 @@
 /**
  * Fingerprint caching for system prompt stability — inspired by Reasonix ImmutablePrefix.
- * 
+ *
  * Tracks whether the system prompt has changed between turns.
  * When the fingerprint changes, it indicates a cache miss is likely.
  */
 
-import { createHash } from "crypto"
-import { FINGERPRINT_LENGTH } from "./constants.js"
+import { createHash } from 'node:crypto'
+import { FINGERPRINT_LENGTH } from './constants.js'
 
 export interface FingerprintResult {
   /** Current fingerprint hash */
@@ -19,11 +19,11 @@ export interface FingerprintResult {
 
 /**
  * Memoized fingerprint tracker for system prompt stability.
- * 
+ *
  * Usage:
  * ```typescript
  * const tracker = createFingerprintTracker()
- * 
+ *
  * // In system.transform hook:
  * const result = tracker.compute(normalizedSystem)
  * if (result.changed) {
@@ -41,10 +41,7 @@ export function createFingerprintTracker(): FingerprintTracker {
   let lastFingerprint: string | null = null
 
   function computeHash(system: string): string {
-    return createHash("sha256")
-      .update(system)
-      .digest("hex")
-      .slice(0, FINGERPRINT_LENGTH)
+    return createHash('sha256').update(system).digest('hex').slice(0, FINGERPRINT_LENGTH)
   }
 
   return {
@@ -63,7 +60,7 @@ export function createFingerprintTracker(): FingerprintTracker {
     hasChanged(system: string): boolean {
       const current = computeHash(system)
       return lastFingerprint !== null && lastFingerprint !== current
-    }
+    },
   }
 }
 
@@ -72,8 +69,5 @@ export function createFingerprintTracker(): FingerprintTracker {
  * Returns first N hex chars of SHA-256 hash.
  */
 export function computeFingerprint(system: string): string {
-  return createHash("sha256")
-    .update(system)
-    .digest("hex")
-    .slice(0, FINGERPRINT_LENGTH)
+  return createHash('sha256').update(system).digest('hex').slice(0, FINGERPRINT_LENGTH)
 }

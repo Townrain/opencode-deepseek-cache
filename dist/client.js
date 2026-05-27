@@ -8,7 +8,7 @@ export function pickPrimaryBalance(infos) {
         return null;
     let best = infos[0];
     for (let i = 1; i < infos.length; i++) {
-        if (Number(infos[i].total_balance) > Number(best.total_balance))
+        if (Number(infos[i]?.total_balance) > Number(best.total_balance))
             best = infos[i];
     }
     return best;
@@ -17,10 +17,10 @@ export function pickPrimaryBalance(infos) {
  * Fetch user balance from DeepSeek API.
  * Returns null on failure so callers can degrade — session must keep working without balance UI.
  */
-export async function getBalance(apiKey, baseUrl = "https://api.deepseek.com") {
+export async function getBalance(apiKey, baseUrl = 'https://api.deepseek.com') {
     try {
         const resp = await fetch(`${baseUrl}/user/balance`, {
-            method: "GET",
+            method: 'GET',
             headers: { Authorization: `Bearer ${apiKey}` },
         });
         if (!resp.ok)

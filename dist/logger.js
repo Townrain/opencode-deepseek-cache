@@ -1,7 +1,7 @@
-import { createWriteStream, statSync, unlinkSync, existsSync, mkdirSync } from "fs";
-import { join } from "path";
-const LOG_DIR = join(process.cwd(), ".deepseek-cache-logs");
-const LOG_FILE = join(LOG_DIR, "debug.log");
+import { createWriteStream, existsSync, mkdirSync, renameSync, statSync } from 'node:fs';
+import { join } from 'node:path';
+const LOG_DIR = join(process.cwd(), '.deepseek-cache-logs');
+const LOG_FILE = join(LOG_DIR, 'debug.log');
 const MAX_LOG_SIZE = 10 * 1024 * 1024; // 10MB
 // Ensure log directory exists
 try {
@@ -14,8 +14,8 @@ catch (err) {
     console.error(`[deepseek-cache] Failed to create log dir:`, err.message);
 }
 // Create write stream (append mode) with error handler
-let stream = createWriteStream(LOG_FILE, { flags: "a" });
-stream.on("error", (err) => {
+let stream = createWriteStream(LOG_FILE, { flags: 'a' });
+stream.on('error', (err) => {
     console.error(`[deepseek-cache] Log stream error:`, err.message);
 });
 /**
@@ -37,17 +37,17 @@ function checkRotation() {
             console.error(`[deepseek-cache] Stream end error:`, err.message);
         }
         // Rename instead of delete to avoid data loss
-        const rotated = LOG_FILE + "." + Date.now();
+        const rotated = `${LOG_FILE}.${Date.now()}`;
         try {
             if (existsSync(LOG_FILE)) {
-                unlinkSync(LOG_FILE);
+                renameSync(LOG_FILE, rotated);
             }
         }
         catch (err) {
             console.error(`[deepseek-cache] File rotation error:`, err.message);
         }
-        stream = createWriteStream(LOG_FILE, { flags: "a" });
-        stream.on("error", (err) => {
+        stream = createWriteStream(LOG_FILE, { flags: 'a' });
+        stream.on('error', (err) => {
             console.error(`[deepseek-cache] Log stream error:`, err.message);
         });
     }
@@ -67,7 +67,7 @@ export function log(message, data) {
                 line += ` [Stringify Error]`;
             }
         }
-        line += "\n";
+        line += '\n';
         // Check rotation before writing
         checkRotation();
         // Write with backpressure handling

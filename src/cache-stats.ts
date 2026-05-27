@@ -1,7 +1,8 @@
-import { DEEPSEEK_PRICES } from "./constants.js"
-import { appendFileSync, readFileSync, existsSync, mkdirSync } from "fs"
-import { dirname } from "path"
-import type { BalanceInfo } from "./client.js"
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
+import { dirname } from 'node:path'
+import type { BalanceInfo } from './client.js'
+import { DEEPSEEK_PRICES } from './constants.js'
+import { log } from './logger.js'
 
 export interface CacheStats {
   totalHitTokens: number
@@ -17,10 +18,10 @@ export interface CacheStats {
 
 // JSONL record format — enhanced with fingerprint tracking
 interface UsageRecord {
-  t: number    // timestamp
-  hit: number  // cache hit tokens
+  t: number // timestamp
+  hit: number // cache hit tokens
   miss: number // cache miss tokens
-  fp?: string  // prefix fingerprint (optional, for tracking stability)
+  fp?: string // prefix fingerprint (optional, for tracking stability)
 }
 
 /**
@@ -28,12 +29,12 @@ interface UsageRecord {
  */
 export function loadStatsFromJsonl(jsonlPath: string): CacheStats {
   const stats = createCacheStats()
-  
+
   try {
     if (!existsSync(jsonlPath)) return stats
 
-    const content = readFileSync(jsonlPath, "utf-8")
-    const lines = content.split("\n").filter(line => line.trim())
+    const content = readFileSync(jsonlPath, 'utf-8')
+    const lines = content.split('\n').filter((line) => line.trim())
     let lastFingerprint: string | null = null
 
     for (const line of lines) {
@@ -42,19 +43,19 @@ export function loadStatsFromJsonl(jsonlPath: string): CacheStats {
         stats.totalHitTokens += record.hit ?? 0
         stats.totalMissTokens += record.miss ?? 0
         stats.requestCount++
-        
+
         // Track prefix changes
         if (record.fp && lastFingerprint && record.fp !== lastFingerprint) {
           stats.prefixChanges++
         }
         if (record.fp) lastFingerprint = record.fp
-        
+
         // Track time range — defensive: record.t could be undefined if JSONL is corrupted
-        const t = typeof record.t === "number" ? record.t : Date.now()
+        const t = typeof record.t === 'number' ? record.t : Date.now()
         if (!stats.firstRequestTime) stats.firstRequestTime = t
         stats.lastRequestTime = t
-      } catch {
-        continue
+      } catch (err) {
+        log('JSONL parse error', { line: line.slice(0, 100), error: String(err) })
       }
     }
   } catch {
@@ -71,7 +72,7 @@ export function appendUsageToJsonl(
   jsonlPath: string,
   hitTokens: number,
   missTokens: number,
-  fingerprint?: string
+  fingerprint?: string,
 ): void {
   try {
     // Ensure directory exists
@@ -87,7 +88,7 @@ export function appendUsageToJsonl(
       ...(fingerprint ? { fp: fingerprint } : {}),
     }
 
-    appendFileSync(jsonlPath, JSON.stringify(record) + "\n", "utf-8")
+    appendFileSync(jsonlPath, `${JSON.stringify(record)}\n`, 'utf-8')
   } catch {
     // Silently ignore write errors
   }
@@ -104,44 +105,45 @@ export function createCacheStats(): CacheStats {
   }
 }
 
-export function getCacheReport(stats: CacheStats, currentFingerprint?: string, balance?: BalanceInfo | null): string {
+export function getCacheReport(
+  stats: CacheStats,
+  currentFingerprint?: string,
+  balance?: BalanceInfo | null,
+): string {
   const total = stats.totalHitTokens + stats.totalMissTokens
-  const hitRate = total > 0 ? ((stats.totalHitTokens / total) * 100).toFixed(1) : "0.0"
+  const hitRate = total > 0 ? ((stats.totalHitTokens / total) * 100).toFixed(1) : '0.0'
   const savedCost =
     (stats.totalHitTokens / 1_000_000) * (DEEPSEEK_PRICES.cacheMiss - DEEPSEEK_PRICES.cacheHit)
   const actualCost =
     (stats.totalHitTokens / 1_000_000) * DEEPSEEK_PRICES.cacheHit +
     (stats.totalMissTokens / 1_000_000) * DEEPSEEK_PRICES.cacheMiss
-  const hypotheticalCost =
-    (total / 1_000_000) * DEEPSEEK_PRICES.cacheMiss
+  const hypotheticalCost = (total / 1_000_000) * DEEPSEEK_PRICES.cacheMiss
 
-  const statusIcon = Number(hitRate) >= 70 ? "🟢" : Number(hitRate) >= 30 ? "🟡" : "🔴"
+  const statusIcon = Number(hitRate) >= 70 ? '🟢' : Number(hitRate) >= 30 ? '🟡' : '🔴'
 
   // Session duration
-  const duration = stats.firstRequestTime && stats.lastRequestTime
-    ? Math.round((stats.lastRequestTime - stats.firstRequestTime) / 1000 / 60)
-    : null
+  const duration =
+    stats.firstRequestTime && stats.lastRequestTime
+      ? Math.round((stats.lastRequestTime - stats.firstRequestTime) / 1000 / 60)
+      : null
 
-  return `
-### 📊 DeepSeek Cache Dashboard
+  return `### 📊 DeepSeek Cache Dashboard
 
-| 核心指标 | 状态 |
-| :--- | :--- |
-${balance ? `| **账户余额** | 💵 $${Number(balance.total_balance).toFixed(2)} ${balance.currency} |` : ""}
-| **缓存命中率** | ${statusIcon} **${hitRate}%** |
-| **命中 Tokens** | \`${stats.totalHitTokens.toLocaleString()}\` |
-| **未命中 Tokens** | \`${stats.totalMissTokens.toLocaleString()}\` |
-| **累计请求数** | ${stats.requestCount} |
-| **实际花费** | $${actualCost.toFixed(6)} |
-| **无缓存花费** | $${hypotheticalCost.toFixed(6)} |
-| **节省金额** | 💰 **$${savedCost.toFixed(6)}** |
-| **节省比例** | ${hypotheticalCost > 0 ? ((savedCost / hypotheticalCost) * 100).toFixed(1) : "0.0"}% |
-${stats.prefixChanges > 0 ? `| **前缀变化** | ⚠️ ${stats.prefixChanges} 次 |` : ""}
-${duration !== null ? `| **会话时长** | ${duration} 分钟 |` : ""}
-${currentFingerprint ? `| **当前指纹** | \`${currentFingerprint}\` |` : ""}
+- **缓存命中率**: ${statusIcon} **${hitRate}%**
+- **命中 Tokens**: ${stats.totalHitTokens.toLocaleString()}
+- **未命中 Tokens**: ${stats.totalMissTokens.toLocaleString()}
+- **累计请求数**: ${stats.requestCount}
+- **实际花费**: ¥${actualCost.toFixed(4)}
+- **无缓存花费**: ¥${hypotheticalCost.toFixed(4)}
+- **节省金额**: 💰 **¥${savedCost.toFixed(4)}**
+- **节省比例**: ${hypotheticalCost > 0 ? ((savedCost / hypotheticalCost) * 100).toFixed(1) : '0.0'}%
+${stats.prefixChanges > 0 ? `- **前缀变化**: ⚠️ ${stats.prefixChanges} 次` : ''}
+${duration !== null ? `- **会话时长**: ${duration} 分钟` : ''}
+${currentFingerprint ? `- **当前指纹**: ${currentFingerprint}` : ''}
+${balance ? `- **账户余额**: 💵 ¥${Number(balance.total_balance).toFixed(2)} ${balance.currency}` : ''}
 
-> 💡 **优化提示**：命中部分按 $0.0028/1M 计费，未命中按 $0.14/1M 计费。
-> 保持 \`user_id\` 稳定以获得跨会话缓存收益。
-> 前缀变化次数越少，缓存命中率越高。
-`.trim()
+> 💡 命中部分按 ¥0.025/百万tokens 计费，未命中按 ¥3/百万tokens 计费。保持 user_id 稳定以获得跨会话缓存收益。
+
+---
+*📊 DeepSeek Cache Statistics Report*`
 }
