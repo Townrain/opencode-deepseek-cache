@@ -1,19 +1,41 @@
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import type { Plugin, PluginModule } from '@opencode-ai/plugin'
 import { tool } from '@opencode-ai/plugin'
+import type { Part } from '@opencode-ai/sdk'
 import { appendUsageToJsonl, getCacheReport, loadStatsFromJsonl } from './cache-stats.js'
-import { type BalanceInfo, getBalance } from './client.js'
 import { createFingerprintTracker } from './fingerprint.js'
-import { getLogPath, log } from './logger.js'
+import { getLogPath, initLogger, log } from './logger.js'
 import { isOfficialDeepSeekEndpoint, isOfficialDeepSeekProvider } from './model-filter.js'
 import { normalizeSystemPrompt } from './system-transform.js'
+
+interface PluginConfig {
+  command?: Record<string, { template: string; description?: string }>
+}
+
+interface SessionResponse {
+  error?: unknown
+  data?: Record<string, unknown>
+}
+
+interface SessionData {
+  tokens?: {
+    cache?: { read?: number }
+    input?: number
+  }
+  model?: {
+    id?: string
+    providerID?: string
+  }
+}
 
 const DeepSeekCachePlugin: Plugin = async (ctx) => {
   // JSONL file path in project's .opencode directory
   const projectPath = ctx.directory || process.cwd()
   const jsonlPath = join(projectPath, '.opencode', 'deepseek-cache-usage.jsonl')
+
+  // Initialize logger with project directory (was previously process.cwd() at import time)
+  initLogger(projectPath)
 
   // Load historical stats from JSONL (survives restarts)
   const stats = loadStatsFromJsonl(jsonlPath)
@@ -21,8 +43,12 @@ const DeepSeekCachePlugin: Plugin = async (ctx) => {
   // Fingerprint tracker for prefix stability monitoring
   const fingerprintTracker = createFingerprintTracker()
 
-  // Cached balance info (updated on session.idle events)
-  let cachedBalance: BalanceInfo | null = null
+  // Cached model ID (set on session.idle, used by /cache-stats and tool)
+  let cachedModelId: string | null = null
+
+  // Delta tracking: session.tokens aggregates ALL models. We track increments
+  // so tokens from non-DeepSeek models between checks are bounded, not cumulative.
+  const sessionBaselines = new Map<string, { input: number; cacheRead: number }>()
   try {
     // Generate stable user_id from project path (SHA-256 for consistency with fingerprint.ts)
     const projectHash = createHash('sha256').update(projectPath).digest('hex').slice(0, 16)
@@ -31,7 +57,7 @@ const DeepSeekCachePlugin: Plugin = async (ctx) => {
     log('=== Plugin Loaded ===', { projectPath, stableUserId, logPath: getLogPath() })
     return {
       // Register custom command /cache-stats
-      config: async (config: any) => {
+      config: async (config: PluginConfig) => {
         try {
           config.command = config.command || {}
           config.command['cache-stats'] = {
@@ -53,7 +79,7 @@ const DeepSeekCachePlugin: Plugin = async (ctx) => {
           if (input.command === 'cache-stats') {
             log('Intercepted /cache-stats command')
             const currentFp = fingerprintTracker.getLastFingerprint()
-            const report = getCacheReport(stats, currentFp ?? undefined, cachedBalance)
+            const report = getCacheReport(stats, currentFp ?? undefined, cachedModelId ?? undefined)
             // Try to output directly via parts
             if (output && typeof output === 'object') {
               output.parts = [
@@ -61,7 +87,7 @@ const DeepSeekCachePlugin: Plugin = async (ctx) => {
                   type: 'text',
                   text: report,
                 },
-              ] as any[]
+              ] as Part[]
               log('Set output.parts for cache-stats')
             }
           }
@@ -78,19 +104,27 @@ const DeepSeekCachePlugin: Plugin = async (ctx) => {
       'chat.params': async (input, output) => {
         try {
           // Only apply to DeepSeek models
-          // Only apply to DeepSeek models
           if (!isOfficialDeepSeekEndpoint(input.model?.api?.url ?? '')) {
             return
           }
-          // Inject stable user_id for cache isolation
-          if (output?.options) {
-            output.options.user_id = stableUserId
-            log('Injected user_id', {
-              stableUserId,
-              model: input.model?.id,
-              provider: input.provider?.info?.id,
-            })
+          // GDPR opt-out: skip user_id injection when DEEPSEEK_CACHE_NO_USER_ID is set
+          if (process.env.DEEPSEEK_CACHE_NO_USER_ID === 'true') {
+            log('user_id injection disabled (DEEPSEEK_CACHE_NO_USER_ID)')
+            return
           }
+          // Inject stable user_id for cache isolation
+          if (!output?.options) {
+            log(
+              'WARNING: output.options unavailable — user_id injection skipped. OpenCode API may have changed.',
+            )
+            return
+          }
+          output.options.user_id = stableUserId
+          log('Injected user_id', {
+            stableUserId,
+            model: input.model?.id,
+            provider: input.provider?.info?.id,
+          })
         } catch (err) {
           log('ERROR in chat.params', { error: String(err) })
         }
@@ -135,28 +169,6 @@ const DeepSeekCachePlugin: Plugin = async (ctx) => {
         try {
           if (event.type !== 'session.idle') return
 
-          // Refresh balance on each session.idle (non-blocking)
-          void (async () => {
-            try {
-              const apiKey = process.env.DEEPSEEK_API_KEY
-              if (!apiKey) {
-                log('Balance fetch skipped — DEEPSEEK_API_KEY not set')
-                return
-              }
-              const balance = await getBalance(apiKey, 'https://api.deepseek.com')
-              if (balance) {
-                cachedBalance = balance
-                log('Balance refreshed', {
-                  total: balance.total_balance,
-                  currency: balance.currency,
-                })
-              }
-            } catch (err) {
-              // Balance fetch failure is non-critical
-              log('Balance fetch failed (non-critical)', { error: String(err) })
-            }
-          })().catch((err) => log('Balance fetch IIFE crashed', { error: String(err) }))
-
           // TypeScript can narrow the type after the type check above
           // EventSessionIdle has properties.sessionID as required field
           const sessionID = (event as { type: string; properties?: { sessionID?: string } })
@@ -170,11 +182,11 @@ const DeepSeekCachePlugin: Plugin = async (ctx) => {
             new Promise<never>((_, reject) =>
               setTimeout(() => reject(new Error('session.get timeout')), timeout),
             ),
-          ])) as any
+          ])) as SessionResponse
 
           if (response.error || !response.data) return
 
-          const session = response.data as any
+          const session = response.data as SessionData
 
           // Only collect stats for official DeepSeek models
           const providerID = session.model?.providerID?.toLowerCase?.() ?? ''
@@ -186,34 +198,25 @@ const DeepSeekCachePlugin: Plugin = async (ctx) => {
             return
           }
 
+          // Cache model ID for pricing-aware reports
+          cachedModelId = session.model?.id ?? null
+
           const tokens = session.tokens
           if (!tokens) return
 
           const hitTokens = tokens.cache?.read ?? 0
-          // DEFENSIVE: tokens.input semantics depend on OpenCode's getUsage() implementation.
-          // Currently: tokens.input = total input - cache hit tokens (pure miss tokens).
-          // If OpenCode changes this semantics, our stats will be incorrect.
-          // We validate by checking if input + cache hit <= total input tokens.
           const missTokens = tokens.input ?? 0
+          // Per-session delta tracking: each session has its own baseline
+          const prev = sessionBaselines.get(sessionID)
+          const deltaHit = Math.max(0, hitTokens - (prev?.cacheRead ?? 0))
+          const deltaMiss = Math.max(0, missTokens - (prev?.input ?? 0))
+          sessionBaselines.set(sessionID, { input: missTokens, cacheRead: hitTokens })
 
-          // Sanity check: hit + miss should not exceed total input tokens
-          // If it does, the token semantics may have changed
-          const totalInput = tokens.inputTotal ?? hitTokens + missTokens
-          if (hitTokens + missTokens > totalInput * 1.1) {
-            // Allow 10% tolerance for rounding
-            log('⚠️ Token count anomaly detected — OpenCode token semantics may have changed', {
-              hitTokens,
-              missTokens,
-              totalInput,
-              providerID,
-            })
-          }
+          if (deltaHit === 0 && deltaMiss === 0) return
 
-          if (hitTokens === 0 && missTokens === 0) return
-
-          // Record usage (in-memory)
-          stats.totalHitTokens += hitTokens
-          stats.totalMissTokens += missTokens
+          // Record usage (in-memory) — use deltas, not absolute session.tokens
+          stats.totalHitTokens += deltaHit
+          stats.totalMissTokens += deltaMiss
           stats.requestCount++
 
           // Update time tracking
@@ -223,14 +226,14 @@ const DeepSeekCachePlugin: Plugin = async (ctx) => {
 
           // Persist to JSONL with fingerprint (survives restarts)
           const currentFp = fingerprintTracker.getLastFingerprint()
-          appendUsageToJsonl(jsonlPath, hitTokens, missTokens, currentFp ?? undefined)
+          appendUsageToJsonl(jsonlPath, deltaHit, deltaMiss, currentFp ?? undefined, cachedModelId ?? undefined)
 
           // Avoid NaN% when both hit and miss are 0
           const total = stats.totalHitTokens + stats.totalMissTokens
           const rate = total > 0 ? `${((stats.totalHitTokens / total) * 100).toFixed(1)}%` : '0.0%'
           log('Recorded usage', {
-            hitTokens,
-            missTokens,
+            deltaHit,
+            deltaMiss,
             requests: stats.requestCount,
             rate,
             fingerprint: currentFp,
@@ -247,7 +250,7 @@ const DeepSeekCachePlugin: Plugin = async (ctx) => {
           args: {},
           async execute() {
             try {
-              const report = getCacheReport(stats, undefined, cachedBalance)
+              const report = getCacheReport(stats, undefined, cachedModelId ?? undefined)
               log('Generated cache report', { length: report.length })
               return report
             } catch (err) {

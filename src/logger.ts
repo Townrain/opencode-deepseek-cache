@@ -1,62 +1,102 @@
-import { createWriteStream, existsSync, mkdirSync, renameSync, statSync } from 'node:fs'
+import { createWriteStream, existsSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
+import { rotateFileIfNeeded } from './file-utils.js'
 
-const LOG_DIR = join(process.cwd(), '.deepseek-cache-logs')
-const LOG_FILE = join(LOG_DIR, 'debug.log')
 const MAX_LOG_SIZE = 10 * 1024 * 1024 // 10MB
 
-// Ensure log directory exists
-try {
-  if (!existsSync(LOG_DIR)) {
-    mkdirSync(LOG_DIR, { recursive: true })
+let LOG_DIR = ''
+let LOG_FILE = ''
+let stream: ReturnType<typeof createWriteStream> | null = null
+
+/** Ensure write stream exists, creating if needed. Idempotent — multiple calls are safe. */
+function ensureStream(): ReturnType<typeof createWriteStream> | null {
+  if (stream && !stream.destroyed) return stream
+
+  // Close old stream if it exists (HMR / re-init case)
+  if (stream) {
+    try {
+      stream.end()
+    } catch (err) {
+      console.error('[deepseek-cache] Old stream cleanup error:', (err as Error).message)
+    }
   }
-} catch (err) {
-  // Log error but don't crash — logging is optional
-  console.error(`[deepseek-cache] Failed to create log dir:`, (err as Error).message)
+
+  stream = createWriteStream(LOG_FILE, { flags: 'a' })
+  stream.on('error', (err) => {
+    console.error(`[deepseek-cache] Log stream error:`, err.message)
+  })
+  return stream
 }
-// Create write stream (append mode) with error handler
-let stream = createWriteStream(LOG_FILE, { flags: 'a' })
-stream.on('error', (err) => {
-  console.error(`[deepseek-cache] Log stream error:`, err.message)
-})
+
+/** Initialize logger with project directory. Must be called once before log(). */
+export function initLogger(directory: string): void {
+  const oldLogDir = join(directory, '.deepseek-cache-logs')
+  LOG_DIR = join(directory, '.opencode', 'deepseek-cache-logs')
+  LOG_FILE = join(LOG_DIR, 'debug.log')
+
+  // Migration notice: v1.2 moved logs from .deepseek-cache-logs → .opencode/deepseek-cache-logs
+  if (existsSync(oldLogDir) && !existsSync(LOG_DIR)) {
+    console.warn(
+      `[deepseek-cache] Log directory migrated: "${oldLogDir}" → "${LOG_DIR}".` +
+        ' Old logs remain at the old path and will not be written to. You may delete the old directory.',
+    )
+  }
+
+  try {
+    if (!existsSync(LOG_DIR)) {
+      mkdirSync(LOG_DIR, { recursive: true })
+    }
+  } catch (err) {
+    console.error(`[deepseek-cache] Failed to create log dir:`, (err as Error).message)
+    return
+  }
+
+  // Create or reuse stream via ensureStream
+  ensureStream()
+}
+
+export function dispose(): void {
+  try {
+    if (stream && !stream.destroyed) {
+      stream.end()
+    }
+  } catch (err) {
+    console.error(`[deepseek-cache] Dispose error:`, (err as Error).message)
+  }
+  stream = null
+}
+
 /**
  * Check log file size and rotate if needed.
  * Uses rename instead of delete to avoid data loss.
  */
 function checkRotation(): void {
+  if (!stream) return
   try {
     if (!existsSync(LOG_FILE)) return
 
-    const stat = statSync(LOG_FILE)
-    if (stat.size < MAX_LOG_SIZE) return
+    const rotated = rotateFileIfNeeded(LOG_FILE, MAX_LOG_SIZE, 3)
+    if (!rotated) return
 
-    // Rotate: close old stream, rename file, create new stream
+    // Close old stream after rotation
     try {
-      stream.end()
+      if (stream && !stream.destroyed) {
+        stream.end()
+        stream = null
+      }
     } catch (err) {
       console.error(`[deepseek-cache] Stream end error:`, (err as Error).message)
     }
 
-    // Rename instead of delete to avoid data loss
-    const rotated = `${LOG_FILE}.${Date.now()}`
-    try {
-      if (existsSync(LOG_FILE)) {
-        renameSync(LOG_FILE, rotated)
-      }
-    } catch (err) {
-      console.error(`[deepseek-cache] File rotation error:`, (err as Error).message)
-    }
-
-    stream = createWriteStream(LOG_FILE, { flags: 'a' })
-    stream.on('error', (err) => {
-      console.error(`[deepseek-cache] Log stream error:`, err.message)
-    })
+    ensureStream()
   } catch (err) {
     console.error(`[deepseek-cache] Rotation error:`, (err as Error).message)
   }
 }
 
 export function log(message: string, data?: any): void {
+  const s = ensureStream()
+  if (!s) return
   try {
     const timestamp = new Date().toISOString()
     let line = `[${timestamp}] ${message}`
@@ -65,25 +105,19 @@ export function log(message: string, data?: any): void {
       try {
         line += ` ${JSON.stringify(data, null, 2)}`
       } catch {
-        line += ` [Stringify Error]`
+        line += ' [Stringify Error]'
       }
     }
 
     line += '\n'
 
-    // Check rotation before writing
     checkRotation()
 
-    // Write with backpressure handling
-    // Note: If stream.write returns false, we should wait for 'drain' event.
-    // However, for debug logs, we accept potential backpressure to avoid blocking.
-    const canContinue = stream.write(line)
+    const canContinue = s.write(line)
     if (!canContinue) {
-      // Backpressure detected — in a production system we would wait for 'drain'.
-      // For debug logs, we accept this and continue.
+      // Backpressure — accept for debug logs
     }
   } catch (err) {
-    // Don't crash the plugin if logging fails
     console.error(`[deepseek-cache] Log write error:`, (err as Error).message)
   }
 }

@@ -12,6 +12,12 @@ vi.mock('fs', () => ({
   appendFileSync: vi.fn(),
   existsSync: vi.fn(),
   mkdirSync: vi.fn(),
+  readdirSync: vi.fn(() => []) as any,
+  openSync: vi.fn(() => 99),
+  closeSync: vi.fn(),
+  renameSync: vi.fn(),
+  statSync: vi.fn(() => ({ size: 0 })),
+  unlinkSync: vi.fn(),
 }))
 
 // Import after mock setup
@@ -48,6 +54,7 @@ describe('loadStatsFromJsonl', () => {
 
   it('parses JSONL records correctly', () => {
     vi.mocked(fs.existsSync).mockReturnValue(true)
+    vi.mocked(fs.readdirSync).mockReturnValue(['path.jsonl'] as any)
     vi.mocked(fs.readFileSync).mockReturnValue(
       '{"t":1000,"hit":500,"miss":100}\n{"t":2000,"hit":300,"miss":50}\n',
     )
@@ -61,6 +68,7 @@ describe('loadStatsFromJsonl', () => {
 
   it('handles empty file', () => {
     vi.mocked(fs.existsSync).mockReturnValue(true)
+    vi.mocked(fs.readdirSync).mockReturnValue(['path.jsonl'] as any)
     vi.mocked(fs.readFileSync).mockReturnValue('')
     const stats = loadStatsFromJsonl('/fake/path.jsonl')
     expect(stats.requestCount).toBe(0)
@@ -68,6 +76,7 @@ describe('loadStatsFromJsonl', () => {
 
   it('skips malformed lines', () => {
     vi.mocked(fs.existsSync).mockReturnValue(true)
+    vi.mocked(fs.readdirSync).mockReturnValue(['path.jsonl'] as any)
     vi.mocked(fs.readFileSync).mockReturnValue(
       '{"t":1000,"hit":500,"miss":100}\nNOT JSON\n{"t":2000,"hit":200,"miss":50}\n',
     )
@@ -78,6 +87,7 @@ describe('loadStatsFromJsonl', () => {
 
   it('tracks prefix fingerprint changes', () => {
     vi.mocked(fs.existsSync).mockReturnValue(true)
+    vi.mocked(fs.readdirSync).mockReturnValue(['path.jsonl'] as any)
     vi.mocked(fs.readFileSync).mockReturnValue(
       '{"t":1000,"hit":100,"miss":0,"fp":"aaa"}\n{"t":2000,"hit":200,"miss":0,"fp":"bbb"}\n{"t":3000,"hit":300,"miss":0,"fp":"bbb"}\n',
     )
@@ -87,6 +97,7 @@ describe('loadStatsFromJsonl', () => {
 
   it('returns empty stats on read error', () => {
     vi.mocked(fs.existsSync).mockReturnValue(true)
+    vi.mocked(fs.readdirSync).mockReturnValue(['path.jsonl'] as any)
     vi.mocked(fs.readFileSync).mockImplementation(() => {
       throw new Error('read error')
     })
@@ -96,6 +107,7 @@ describe('loadStatsFromJsonl', () => {
 
   it('handles records with missing timestamp gracefully', () => {
     vi.mocked(fs.existsSync).mockReturnValue(true)
+    vi.mocked(fs.readdirSync).mockReturnValue(['path.jsonl'] as any)
     vi.mocked(fs.readFileSync).mockReturnValue('{"hit":100,"miss":50}\n')
     const stats = loadStatsFromJsonl('/fake/path.jsonl')
     expect(stats.requestCount).toBe(1)
@@ -106,6 +118,7 @@ describe('loadStatsFromJsonl', () => {
 describe('appendUsageToJsonl', () => {
   it('creates directory if it does not exist and appends record', () => {
     vi.mocked(fs.existsSync).mockReturnValue(false)
+    vi.mocked(fs.openSync).mockReturnValue(99)
     vi.mocked(fs.appendFileSync).mockImplementation(() => {})
 
     appendUsageToJsonl('/fake/dir/file.jsonl', 500, 100, 'abc123')
@@ -122,6 +135,7 @@ describe('appendUsageToJsonl', () => {
 
   it('skips directory creation when it exists', () => {
     vi.mocked(fs.existsSync).mockReturnValue(true)
+    vi.mocked(fs.openSync).mockReturnValue(99)
     vi.mocked(fs.appendFileSync).mockImplementation(() => {})
 
     appendUsageToJsonl('/fake/dir/file.jsonl', 100, 50)
@@ -133,8 +147,8 @@ describe('appendUsageToJsonl', () => {
 
   it('silently ignores write errors', () => {
     vi.mocked(fs.existsSync).mockReturnValue(true)
-    vi.mocked(fs.appendFileSync).mockImplementation(() => {
-      throw new Error('write error')
+    vi.mocked(fs.openSync).mockImplementation(() => {
+      throw new Error('lock failed')
     })
 
     expect(() => appendUsageToJsonl('/fake/file.jsonl', 100, 50)).not.toThrow()
@@ -166,12 +180,10 @@ describe('getCacheReport', () => {
     expect(report).toContain('前缀变化')
   })
 
-  it('includes balance info when provided', () => {
+  it('does not include balance info (removed feature)', () => {
     const stats = createCacheStats()
-    const balance = { currency: 'USD', total_balance: '42.50' }
-    const report = getCacheReport(stats, undefined, balance)
-    expect(report).toContain('¥42.50')
-    expect(report).toContain('USD')
+    const report = getCacheReport(stats)
+    expect(report).not.toContain('账户余额')
   })
 
   it('shows yellow icon for medium hit rate', () => {

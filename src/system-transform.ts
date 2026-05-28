@@ -56,18 +56,3 @@ export function normalizeSystemPrompt(system: string[]): NormalizationResult {
 
   return { changed, replacements: totalReplacements, fingerprint }
 }
-
-/**
- * Check if a system prompt needs normalization without modifying it.
- * Useful for debugging and metrics.
- */
-export function needsNormalization(system: string[]): boolean {
-  if (!Array.isArray(system) || system.length === 0) return false
-
-  const combined = system.join('')
-  for (const [pattern] of DYNAMIC_PATTERNS) {
-    pattern.lastIndex = 0
-    if (pattern.test(combined)) return true
-  }
-  return false
-}

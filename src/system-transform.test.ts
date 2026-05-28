@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { needsNormalization, normalizeSystemPrompt } from './system-transform.js'
+import { normalizeSystemPrompt } from './system-transform.js'
 
 describe('normalizeSystemPrompt', () => {
   it('returns unchanged=false for empty array', () => {
@@ -23,11 +23,11 @@ describe('normalizeSystemPrompt', () => {
   })
 
   it('replaces ISO timestamps', () => {
-    const system = ['Current time is 2025-01-15T10:30:00Z.']
+    const system = ['Current time: 2025-01-15T10:30:00Z.']
     const result = normalizeSystemPrompt(system)
     expect(result.changed).toBe(true)
     expect(result.replacements).toBe(1)
-    expect(system[0]).toBe('Current time is [TIME].')
+    expect(system[0]).toBe('Current time:[TIME].')
   })
 
   it('replaces UUIDs', () => {
@@ -80,10 +80,10 @@ describe('normalizeSystemPrompt', () => {
   })
 
   it('replaces multiple patterns in one string', () => {
-    const system = ['Time 2025-01-15T10:30:00Z id 550e8400-e29b-41d4-a716-446655440000']
+    const system = ['Time: 2025-01-15T10:30:00Z id 550e8400-e29b-41d4-a716-446655440000']
     const result = normalizeSystemPrompt(system)
     expect(result.replacements).toBe(2)
-    expect(system[0]).toBe('Time [TIME] id [ID]')
+    expect(system[0]).toBe('Time:[TIME] id [ID]')
   })
 
   it('handles multiple array elements', () => {
@@ -95,7 +95,7 @@ describe('normalizeSystemPrompt', () => {
     const result = normalizeSystemPrompt(system)
     expect(result.changed).toBe(true)
     expect(result.replacements).toBe(2)
-    expect(system[0]).toBe('System time: [TIME]')
+    expect(system[0]).toBe('System time:[TIME]')
     expect(system[1]).toBe('Session: [ID]')
     expect(system[2]).toBe('Static text')
   })
@@ -108,46 +108,9 @@ describe('normalizeSystemPrompt', () => {
   })
 
   it('skips non-string elements', () => {
-    const system: any[] = ['Valid text', 123, null, 'More text 2025-01-15T10:30:00Z']
+    const system: any[] = ['Valid text', 123, null, 'More text: 2025-01-15T10:30:00Z']
     const result = normalizeSystemPrompt(system)
     expect(result.changed).toBe(true)
     expect(result.replacements).toBe(1)
-  })
-})
-
-describe('needsNormalization', () => {
-  it('returns false for empty array', () => {
-    expect(needsNormalization([])).toBe(false)
-  })
-
-  it('returns false for null/undefined-like input', () => {
-    expect(needsNormalization(null as any)).toBe(false)
-  })
-
-  it('returns false for static content', () => {
-    expect(needsNormalization(['You are helpful.'])).toBe(false)
-  })
-
-  it('returns true when timestamps present', () => {
-    expect(needsNormalization(['Time: 2025-01-15T10:30:00Z'])).toBe(true)
-  })
-
-  it('returns true when UUIDs present', () => {
-    expect(needsNormalization(['ID: 550e8400-e29b-41d4-a716-446655440000'])).toBe(true)
-  })
-
-  it('returns true when version strings present', () => {
-    expect(needsNormalization(['Version: v1.2.3'])).toBe(true)
-  })
-
-  it('returns true when temp paths present', () => {
-    expect(needsNormalization(['Path: /tmp/abc'])).toBe(true)
-  })
-
-  it('does not modify the input array', () => {
-    const system = ['Time: 2025-01-15T10:30:00Z']
-    const original = system[0]
-    needsNormalization(system)
-    expect(system[0]).toBe(original)
   })
 })

@@ -34,19 +34,14 @@ export interface FingerprintResult {
 export interface FingerprintTracker {
   compute(system: string): FingerprintResult
   getLastFingerprint(): string | null
-  hasChanged(system: string): boolean
 }
 
 export function createFingerprintTracker(): FingerprintTracker {
   let lastFingerprint: string | null = null
 
-  function computeHash(system: string): string {
-    return createHash('sha256').update(system).digest('hex').slice(0, FINGERPRINT_LENGTH)
-  }
-
   return {
     compute(system: string): FingerprintResult {
-      const current = computeHash(system)
+      const current = computeFingerprint(system)
       const changed = lastFingerprint !== null && lastFingerprint !== current
       const previous = lastFingerprint
       lastFingerprint = current
@@ -55,11 +50,6 @@ export function createFingerprintTracker(): FingerprintTracker {
 
     getLastFingerprint(): string | null {
       return lastFingerprint
-    },
-
-    hasChanged(system: string): boolean {
-      const current = computeHash(system)
-      return lastFingerprint !== null && lastFingerprint !== current
     },
   }
 }

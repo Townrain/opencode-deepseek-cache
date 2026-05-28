@@ -65,31 +65,4 @@ describe('createFingerprintTracker', () => {
       expect(tracker.getLastFingerprint()).toBe(result.fingerprint)
     })
   })
-
-  describe('hasChanged', () => {
-    it('returns false when no previous fingerprint', () => {
-      const tracker = createFingerprintTracker()
-      expect(tracker.hasChanged('anything')).toBe(false)
-    })
-
-    it('returns false for same content as last compute', () => {
-      const tracker = createFingerprintTracker()
-      tracker.compute('stable prompt')
-      expect(tracker.hasChanged('stable prompt')).toBe(false)
-    })
-
-    it('returns true for different content', () => {
-      const tracker = createFingerprintTracker()
-      tracker.compute('prompt A')
-      expect(tracker.hasChanged('prompt B')).toBe(true)
-    })
-
-    it('does not mutate state', () => {
-      const tracker = createFingerprintTracker()
-      tracker.compute('original')
-      tracker.hasChanged('different')
-      // lastFingerprint should still be from the "original" compute
-      expect(tracker.getLastFingerprint()).toBe(computeFingerprint('original'))
-    })
-  })
 })

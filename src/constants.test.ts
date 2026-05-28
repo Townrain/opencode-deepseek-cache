@@ -4,6 +4,7 @@ import {
   DEEPSEEK_PRICES,
   DYNAMIC_PATTERNS,
   FINGERPRINT_LENGTH,
+  getPricingForModel,
   isOfficialDeepSeekEndpoint,
 } from './constants.js'
 
@@ -23,29 +24,31 @@ describe('DYNAMIC_PATTERNS', () => {
     const pattern = DYNAMIC_PATTERNS[0]!
 
     it('matches UTC timestamp with Z', () => {
-      expect(matches(pattern[0], '2025-01-15T10:30:00Z')).toBe(true)
+      expect(matches(pattern[0], ': 2025-01-15T10:30:00Z')).toBe(true)
     })
 
     it('matches timestamp with milliseconds', () => {
-      expect(matches(pattern[0], '2025-01-15T10:30:00.123Z')).toBe(true)
+      expect(matches(pattern[0], ': 2025-01-15T10:30:00.123Z')).toBe(true)
     })
 
     it('matches timestamp with timezone offset', () => {
-      expect(matches(pattern[0], '2025-01-15T10:30:00+08:00')).toBe(true)
-      expect(matches(pattern[0], '2025-01-15T10:30:00+05:30')).toBe(true)
-      expect(matches(pattern[0], '2025-01-15T10:30:00-05:00')).toBe(true)
+      expect(matches(pattern[0], ': 2025-01-15T10:30:00+08:00')).toBe(true)
+      expect(matches(pattern[0], ': 2025-01-15T10:30:00+05:30')).toBe(true)
+      expect(matches(pattern[0], ': 2025-01-15T10:30:00-05:00')).toBe(true)
     })
 
     it('matches timestamp without timezone', () => {
-      expect(matches(pattern[0], '2025-01-15T10:30:00')).toBe(true)
+      expect(matches(pattern[0], ': 2025-01-15T10:30:00')).toBe(true)
     })
 
     it('replaces with [TIME]', () => {
-      expect(replace(pattern[0], pattern[1], 'at 2025-01-15T10:30:00Z now')).toBe('at [TIME] now')
+      expect(replace(pattern[0], pattern[1], 'time: 2025-01-15T10:30:00Z now')).toBe(
+        'time:[TIME] now',
+      )
     })
 
     it('does not match plain date', () => {
-      expect(matches(pattern[0], '2025-01-15')).toBe(false)
+      expect(matches(pattern[0], ': 2025-01-15')).toBe(false)
     })
   })
 
@@ -170,13 +173,62 @@ describe('DYNAMIC_PATTERNS', () => {
   })
 })
 
-describe('DEEPSEEK_PRICES', () => {
-  it('has correct cache miss price', () => {
-    expect(DEEPSEEK_PRICES.cacheMiss).toBe(3.0)
+describe('getPricingForModel', () => {
+  it('returns flash pricing for deepseek-chat (v4-flash)', () => {
+    const p = getPricingForModel('deepseek-chat')
+    expect(p.cacheMiss).toBe(1.0)
+    expect(p.cacheHit).toBe(0.02)
   })
 
-  it('has correct cache hit price', () => {
-    expect(DEEPSEEK_PRICES.cacheHit).toBe(0.025)
+  it('returns flash pricing for deepseek-v4-flash', () => {
+    const p = getPricingForModel('deepseek-v4-flash')
+    expect(p.cacheMiss).toBe(1.0)
+    expect(p.cacheHit).toBe(0.02)
+  })
+
+  it('returns pro pricing for deepseek-v4-pro', () => {
+    const p = getPricingForModel('deepseek-v4-pro')
+    expect(p.cacheMiss).toBe(3.0)
+    expect(p.cacheHit).toBe(0.025)
+  })
+
+  it('returns flash pricing for deepseek-reasoner (thinking mode of v4-flash)', () => {
+    const p = getPricingForModel('deepseek-reasoner')
+    expect(p.cacheMiss).toBe(1.0)
+    expect(p.cacheHit).toBe(0.02)
+  })
+
+  it('returns flash pricing as default for unknown models', () => {
+    const p = getPricingForModel('unknown-model')
+    expect(p.cacheMiss).toBe(1.0)
+    expect(p.cacheHit).toBe(0.02)
+  })
+
+  it('returns flash pricing when modelId is undefined', () => {
+    const p = getPricingForModel()
+    expect(p.cacheMiss).toBe(1.0)
+    expect(p.cacheHit).toBe(0.02)
+  })
+
+  it('cache hit is cheaper than cache miss for all models', () => {
+    for (const id of [
+      'deepseek-chat',
+      'deepseek-v4-flash',
+      'deepseek-v4-pro',
+      'deepseek-reasoner',
+    ]) {
+      const p = getPricingForModel(id)
+      expect(p.cacheHit).toBeLessThan(p.cacheMiss)
+    }
+  })
+})
+
+// Keep old test for backwards compat of DEEPSEEK_PRICES constant
+describe('DEEPSEEK_PRICES (legacy)', () => {
+  it('is a pricing table object', () => {
+    expect(DEEPSEEK_PRICES).toBeDefined()
+    expect(DEEPSEEK_PRICES.cacheMiss).toBeGreaterThan(0)
+    expect(DEEPSEEK_PRICES.cacheHit).toBeGreaterThan(0)
   })
 
   it('cache hit is cheaper than cache miss', () => {

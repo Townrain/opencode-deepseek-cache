@@ -29,12 +29,16 @@ afterEach(() => {
 })
 
 // Import after mock setup — dynamic import with top-level await is fine in ESM
-const { log, getLogPath } = await import('./logger.js')
+const { initLogger, log, getLogPath } = await import('./logger.js')
+
+// Initialize logger before tests
+initLogger('/test/project')
 
 describe('getLogPath', () => {
-  it('returns a path containing .deepseek-cache-logs', () => {
+  it('returns a path containing .opencode/deepseek-cache-logs', () => {
     const path = getLogPath()
-    expect(path).toContain('.deepseek-cache-logs')
+    expect(path).toContain('.opencode')
+    expect(path).toContain('deepseek-cache-logs')
     expect(path).toContain('debug.log')
   })
 })
@@ -42,7 +46,6 @@ describe('getLogPath', () => {
 describe('log', () => {
   it('writes a message to the stream', () => {
     log('test message')
-    // Verify it doesn't throw
     expect(() => log('another message')).not.toThrow()
   })
 
@@ -64,7 +67,7 @@ describe('log', () => {
     const fs = await import('node:fs')
     const mockStream = vi.mocked(fs.createWriteStream).mock.results[0]?.value
     if (mockStream) {
-      mockStream.write.mockReturnValue(false) // simulate backpressure
+      mockStream.write.mockReturnValue(false)
     }
     expect(() => log('backpressure test')).not.toThrow()
   })
