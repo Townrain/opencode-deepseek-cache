@@ -1,26 +1,11 @@
-# Dependencies
 node_modules/
-
-# Build output
 dist/
-
-# Logs
+*.log
+.opencode/deepseek-cache-logs/
 .deepseek-cache-logs/
-
-# Lock files
-package-lock.json
+.env
+.env.local
 bun.lock
+scripts/
 
-# IDE
-.vscode/
-.idea/
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Test files
-test-plugin.ts
-
-# OpenCode
-.opencode/
+opencode.json
