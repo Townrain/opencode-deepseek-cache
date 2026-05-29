@@ -33,6 +33,20 @@ describe('createFingerprintTracker', () => {
     expect(tracker.getLastFingerprint()).toBeNull()
   })
 
+  it('initializes with persisted fingerprint', () => {
+    const tracker = createFingerprintTracker('abc123def4567890')
+    expect(tracker.getLastFingerprint()).toBe('abc123def4567890')
+    const result = tracker.compute('some system prompt')
+    expect(result.previous).toBe('abc123def4567890')
+  })
+
+  it('initializes with null (backward compatible)', () => {
+    const tracker = createFingerprintTracker(null)
+    expect(tracker.getLastFingerprint()).toBeNull()
+    const result = tracker.compute('test')
+    expect(result.changed).toBe(false)
+  })
+
   describe('compute', () => {
     it('returns changed=false on first call', () => {
       const tracker = createFingerprintTracker()
@@ -64,5 +78,25 @@ describe('createFingerprintTracker', () => {
       const result = tracker.compute('test')
       expect(tracker.getLastFingerprint()).toBe(result.fingerprint)
     })
+
+  it('compute receives raw text, not hex fingerprint', () => {
+    const tracker = createFingerprintTracker()
+    // First call with raw text — should work normally
+    const first = tracker.compute('hello world')
+    expect(first.changed).toBe(false)
+    expect(first.fingerprint).toHaveLength(16)
+
+    // Second call with different raw text — should detect change
+    const second = tracker.compute('goodbye world')
+    expect(second.changed).toBe(true)
+    expect(second.fingerprint).not.toBe(first.fingerprint)
+    expect(second.previous).toBe(first.fingerprint)
+
+    // Verify the hash is from raw text, not double-hashed
+    // computeFingerprint('hello world') should equal computeFingerprint('hello world')
+    // (deterministic), but computeFingerprint('a1b2c3...16hex') != computeFingerprint('hello world')
+    const rawFp = computeFingerprint('hello world')
+    expect(first.fingerprint).toBe(rawFp)
+  })
   })
 })

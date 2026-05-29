@@ -27,7 +27,7 @@ describe('normalizeSystemPrompt', () => {
     const result = normalizeSystemPrompt(system)
     expect(result.changed).toBe(true)
     expect(result.replacements).toBe(1)
-    expect(system[0]).toBe('Current time:[TIME].')
+    expect(system[0]).toBe('Current time: [TIME].')
   })
 
   it('replaces UUIDs', () => {
@@ -83,7 +83,7 @@ describe('normalizeSystemPrompt', () => {
     const system = ['Time: 2025-01-15T10:30:00Z id 550e8400-e29b-41d4-a716-446655440000']
     const result = normalizeSystemPrompt(system)
     expect(result.replacements).toBe(2)
-    expect(system[0]).toBe('Time:[TIME] id [ID]')
+    expect(system[0]).toBe('Time: [TIME] id [ID]')
   })
 
   it('handles multiple array elements', () => {
@@ -95,7 +95,7 @@ describe('normalizeSystemPrompt', () => {
     const result = normalizeSystemPrompt(system)
     expect(result.changed).toBe(true)
     expect(result.replacements).toBe(2)
-    expect(system[0]).toBe('System time:[TIME]')
+    expect(system[0]).toBe('System time: [TIME]')
     expect(system[1]).toBe('Session: [ID]')
     expect(system[2]).toBe('Static text')
   })
@@ -112,5 +112,18 @@ describe('normalizeSystemPrompt', () => {
     const result = normalizeSystemPrompt(system)
     expect(result.changed).toBe(true)
     expect(result.replacements).toBe(1)
+  })
+
+  it('NormalizationResult includes normalized field', () => {
+    const system = ['Current time: 2025-01-15T10:30:00Z. Static text.']
+    const result = normalizeSystemPrompt(system)
+    expect(result).toHaveProperty('normalized')
+    expect(typeof result.normalized).toBe('string')
+    expect(result.normalized).toBe('Current time: [TIME]. Static text.')
+  })
+
+  it('returns normalized as empty string for empty input', () => {
+    const result = normalizeSystemPrompt([])
+    expect(result.normalized).toBe('')
   })
 })

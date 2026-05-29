@@ -1,12 +1,12 @@
 {
   "name": "opencode-deepseek-cache",
-  "version": "1.2.0",
+  "version": "2.0.0",
   "description": "DeepSeek context caching optimization plugin for OpenCode",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "build": "tsc",
+    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc",
     "dev": "tsc --watch",
     "lint": "biome check --write .",
     "lint:ci": "biome ci .",

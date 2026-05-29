@@ -36,8 +36,8 @@ export interface FingerprintTracker {
   getLastFingerprint(): string | null
 }
 
-export function createFingerprintTracker(): FingerprintTracker {
-  let lastFingerprint: string | null = null
+export function createFingerprintTracker(initialFingerprint?: string | null): FingerprintTracker {
+  let lastFingerprint: string | null = initialFingerprint ?? null
 
   return {
     compute(system: string): FingerprintResult {
@@ -56,7 +56,9 @@ export function createFingerprintTracker(): FingerprintTracker {
 
 /**
  * Lightweight fingerprint for debugging — no state tracking.
- * Returns first N hex chars of SHA-256 hash.
+ * Returns first N hex chars (16 = 64 bits) of SHA-256 hash.
+ * 64-bit truncation is intentional: trades collision resistance for
+ * human-readability in logs. Full SHA-256 would be 64 hex chars.
  */
 export function computeFingerprint(system: string): string {
   return createHash('sha256').update(system).digest('hex').slice(0, FINGERPRINT_LENGTH)

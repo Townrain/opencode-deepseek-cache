@@ -1,8 +1,8 @@
 import { createWriteStream, existsSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
+import { MAX_LOG_SIZE } from './constants.js'
 import { rotateFileIfNeeded } from './file-utils.js'
 
-const MAX_LOG_SIZE = 10 * 1024 * 1024 // 10MB
 
 let LOG_DIR = ''
 let LOG_FILE = ''
@@ -82,10 +82,11 @@ function checkRotation(): void {
     try {
       if (stream && !stream.destroyed) {
         stream.end()
-        stream = null
       }
     } catch (err) {
       console.error(`[deepseek-cache] Stream end error:`, (err as Error).message)
+    } finally {
+      stream = null
     }
 
     ensureStream()
@@ -95,8 +96,6 @@ function checkRotation(): void {
 }
 
 export function log(message: string, data?: any): void {
-  const s = ensureStream()
-  if (!s) return
   try {
     const timestamp = new Date().toISOString()
     let line = `[${timestamp}] ${message}`
@@ -111,11 +110,15 @@ export function log(message: string, data?: any): void {
 
     line += '\n'
 
+    // Rotate BEFORE acquiring stream so we never write to a dead stream
     checkRotation()
+
+    const s = ensureStream()
+    if (!s) return
 
     const canContinue = s.write(line)
     if (!canContinue) {
-      // Backpressure — accept for debug logs
+      console.error('[deepseek-cache] Backpressure: log write deferred')
     }
   } catch (err) {
     console.error(`[deepseek-cache] Log write error:`, (err as Error).message)

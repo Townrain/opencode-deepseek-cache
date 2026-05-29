@@ -19,6 +19,8 @@ export interface NormalizationResult {
   replacements: number
   /** Fingerprint of the normalized system */
   fingerprint: string
+  /** Raw normalized system text (for fingerprint tracking — pass to tracker.compute(), not fingerprint) */
+  normalized: string
 }
 
 /**
@@ -30,7 +32,7 @@ export interface NormalizationResult {
 export function normalizeSystemPrompt(system: string[]): NormalizationResult {
   // Guard against null/undefined system parameter
   if (!Array.isArray(system) || system.length === 0) {
-    return { changed: false, replacements: 0, fingerprint: '' }
+    return { changed: false, replacements: 0, fingerprint: '', normalized: '' }
   }
 
   let totalReplacements = 0
@@ -40,7 +42,8 @@ export function normalizeSystemPrompt(system: string[]): NormalizationResult {
     if (typeof system[i] !== 'string') continue
 
     for (const [pattern, replacement] of DYNAMIC_PATTERNS) {
-      // Reset regex lastIndex for global patterns
+      // Reset regex lastIndex for global patterns.
+      // Safe in single-threaded Node.js: no concurrent access to shared regex state.
       pattern.lastIndex = 0
       const matches = system[i].match(pattern)
       if (matches) {
@@ -54,5 +57,5 @@ export function normalizeSystemPrompt(system: string[]): NormalizationResult {
   const changed = before !== after
   const fingerprint = computeFingerprint(after)
 
-  return { changed, replacements: totalReplacements, fingerprint }
+  return { changed, replacements: totalReplacements, fingerprint, normalized: after }
 }

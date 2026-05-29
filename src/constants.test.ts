@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import {
   DEEPSEEK_PRICES,
@@ -43,12 +43,32 @@ describe('DYNAMIC_PATTERNS', () => {
 
     it('replaces with [TIME]', () => {
       expect(replace(pattern[0], pattern[1], 'time: 2025-01-15T10:30:00Z now')).toBe(
-        'time:[TIME] now',
+        'time: [TIME] now',
       )
     })
 
     it('does not match plain date', () => {
       expect(matches(pattern[0], ': 2025-01-15')).toBe(false)
+    })
+
+    it('matches timestamp at string start', () => {
+      expect(matches(pattern[0], '2025-01-15T10:30:00Z')).toBe(true)
+    })
+
+    it('matches timestamp after newline', () => {
+      expect(matches(pattern[0], 'text\n2025-01-15T10:30:00Z')).toBe(true)
+    })
+
+    it('matches timestamp after space in sentence', () => {
+      expect(matches(pattern[0], 'The time is 2025-01-15T10:30:00Z')).toBe(true)
+    })
+
+    it('preserves leading space in sentence', () => {
+      const input = 'The time is 2025-01-15T10:30:00Z now'
+      pattern[0].lastIndex = 0
+      const matches = input.match(pattern[0])
+      expect(matches).toHaveLength(1)
+      expect(replace(pattern[0], pattern[1], input)).toBe('The time is [TIME] now')
     })
   })
 
@@ -241,6 +261,35 @@ describe('FINGERPRINT_LENGTH', () => {
     expect(FINGERPRINT_LENGTH).toBe(16)
   })
 })
+
+describe('env-configurable constants', () => {
+  it('MAX_JSONL_SIZE uses env var', async () => {
+    const original = process.env.DEEPSEEK_CACHE_MAX_JSONL_SIZE
+    process.env.DEEPSEEK_CACHE_MAX_JSONL_SIZE = '5242880'
+    vi.resetModules()
+    const mod = await import('./constants.js')
+    expect(mod.MAX_JSONL_SIZE).toBe(5242880)
+    if (original !== undefined) {
+      process.env.DEEPSEEK_CACHE_MAX_JSONL_SIZE = original
+    } else {
+      delete process.env.DEEPSEEK_CACHE_MAX_JSONL_SIZE
+    }
+  })
+
+  it('MAX_SESSION_BASELINES uses env var', async () => {
+    const original = process.env.DEEPSEEK_CACHE_MAX_SESSIONS
+    process.env.DEEPSEEK_CACHE_MAX_SESSIONS = '500'
+    vi.resetModules()
+    const mod = await import('./constants.js')
+    expect(mod.MAX_SESSION_BASELINES).toBe(500)
+    if (original !== undefined) {
+      process.env.DEEPSEEK_CACHE_MAX_SESSIONS = original
+    } else {
+      delete process.env.DEEPSEEK_CACHE_MAX_SESSIONS
+    }
+  })
+})
+
 describe('isOfficialDeepSeekEndpoint', () => {
   it('returns true for api.deepseek.com', () => {
     expect(isOfficialDeepSeekEndpoint('https://api.deepseek.com/v1/chat/completions')).toBe(true)

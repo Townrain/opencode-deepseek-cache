@@ -43,9 +43,12 @@ DYNAMIC_PATTERNS = [
 
 Combined with SHA-256 fingerprint tracking, every request checks if the prefix has changed. If the fingerprint changes, the log immediately warns: `⚠️ Prefix fingerprint changed — cache miss expected`.
 
-**价值 | Value**: 无论重启多少次、跨多少天，发给 DeepSeek 的前缀**永远字节级一致**。保住每次重启时基础工具定义缓存的 **98% 折扣**。
+**价值 | Value**: 无论重启多少次、跨多少天，发给 DeepSeek 的 **System Prompt 前缀**永远字节级一致。保住每次重启时基础工具定义缓存的 **98% 折扣**。
 
-No matter how many restarts or days pass, the prefix sent to DeepSeek is **always byte-identical**. Preserves the **98% discount** on base tool definitions every restart.
+No matter how many restarts or days pass, the **system prompt prefix** sent to DeepSeek is **always byte-identical**. Preserves the **98% discount** on base tool definitions every restart.
+
+> **注意 | Note**: 本插件仅归一化 system prompt 中的动态内容。tool 定义或消息内容中的动态元素不会被替换。OpenCode 插件架构未在 hook 中暴露 tools 定义，因此无法在插件层面覆盖完整前缀。
+> This plugin only normalizes dynamic content in the system prompt. Dynamic elements in tool definitions or message content are NOT replaced.
 
 ---
 
@@ -53,7 +56,7 @@ No matter how many restarts or days pass, the prefix sent to DeepSeek is **alway
 
 ```typescript
 // 基于项目路径生成确定性 user_id
-const projectHash = createHash("sha256").update(projectPath).digest("hex").slice(0, 16)
+const projectHash = createHash("sha256").update(gitRoot).digest("hex").slice(0, 16)
 const stableUserId = `opencode-${projectHash}`
 ```
 
@@ -151,10 +154,9 @@ One record (~80 bytes) per `session.idle`. Auto-rotates at 10MB, keeping last 3.
 
 This plugin's **cost tracking** (cache hit/miss stats, `/cache-stats` dashboard) only records usage from official DeepSeek API endpoints. Third-party proxies and compatible providers are excluded from statistics to keep your cost data accurate.
 
-**What still works for ALL models** (official and third-party):
+**What is filtered to official DeepSeek only**:
 - ✅ Cross-terminal `user_id` injection
 - ✅ GDPR opt-out via `DEEPSEEK_CACHE_NO_USER_ID=true` env var
-**What is filtered to official DeepSeek only**:
 - ✅ System prompt normalization (timestamp/UUID/date replacement)
 - ✅ Fingerprint tracking
 - 📊 Cache hit/miss statistics tracking
@@ -173,11 +175,10 @@ This plugin's **cost tracking** (cache hit/miss stats, `/cache-stats` dashboard)
 
 本插件的**成本追踪**（缓存命中/未命中统计、`/cache-stats` 面板）仅记录来自官方 DeepSeek API 端点的使用数据。第三方代理和兼容提供商的数据会被排除，以保持成本数据的准确性。
 
-**所有模型（官方和第三方）均可用的功能**：
-- ✅ 跨终端 `user_id` 注入
-- ✅ GDPR opt-out 通过 `DEEPSEEK_CACHE_NO_USER_ID=true` 环境变量
 
 **仅限官方 DeepSeek 的功能**：
+- ✅ 跨终端 `user_id` 注入
+- ✅ GDPR opt-out 通过 `DEEPSEEK_CACHE_NO_USER_ID=true` 环境变量
 - ✅ 系统提示词规范化（时间戳/UUID/日期替换）
 - ✅ 指纹追踪
 - 📊 缓存命中/未命中统计追踪
@@ -208,7 +209,6 @@ npm install opencode-deepseek-cache
   "$schema": "https://opencode.ai/config.json",
   "plugin": ["file:///D:/path/to/opencode-deepseek-cache"]
 }
-}
 ```
 
 ## 🔄 更新 | Upgrade
@@ -228,7 +228,7 @@ node -e "console.log(require('./node_modules/opencode-deepseek-cache/package.jso
 ```bash
 npm update opencode-deepseek-cache
 # 或指定版本
-npm install opencode-deepseek-cache@1.2.0
+npm install opencode-deepseek-cache@2.0.0
 ```
 
 ### 本地路径引用用户 | Local Path Users
@@ -251,30 +251,29 @@ npm run build
 node -e "console.log(require('./package.json').version)"
 ```
 
-### 1.1.0 → 1.2.0 变更 | Changelog
+## 📋 变更记录 | Changelog
+
+### v1.2.1 → v2.0.0
+
+v2 是累积性大版本，整合了多轮研究和超平面规划的成果。
 
 | 类型 | 变更 |
 |------|------|
-| **⚠️ Breaking** | 余额查询功能已删除 — `/cache-stats` 面板不再显示账户余额 |
-| **⚠️ Breaking** | 日志目录从 `.deepseek-cache-logs/` 迁移到 `.opencode/deepseek-cache-logs/`（首次启动自动提示，旧目录可手动删除） |
-| **🐛 Fix** | JSONL 文件轮转后不再丢失历史统计数据 |
-| **🐛 Fix** | 多会话 Token 追踪不再跨会话污染（每个会话独立 delta 基线） |
-| **🐛 Fix** | 正则模板路径现在支持嵌套目录和带点号的文件名 |
-| **🐛 Fix** | Logger 流泄漏已修复（新增 `dispose` hook） |
-| **🐛 Fix** | Windows 上 JSONL 写入增加锁文件保护，防止并发损坏 |
-| **🐛 Fix** | ISO 时间戳正则不再误匹配代码示例中的时间字符串 |
-| **🐛 Fix** | Windows 盘符匹配现在大小写不敏感 |
-| **✨ New** | GDPR opt-out：设置 `DEEPSEEK_CACHE_NO_USER_ID=true` 可禁用 user_id 指纹 |
-| **✨ New** | JSONL 记录新增 `model` 字段，支持未来按模型分别计费 |
-| **✨ New** | `index.ts` 新增 13 项测试，覆盖所有 hook |
-| **🧹 Refactor** | `as any` 转型替换为具名接口 |
-| **🧹 Refactor** | 文件旋转逻辑提取到共享 `file-utils.ts` 模块 |
+| **✨ New** | **Git-Root-Aware User ID** — `findGitRoot()` 向上查找 `.git/` 根目录，解决 monorepo 多目录缓存碎片化 |
+| **✨ New** | **Fingerprint 持久化** — 指纹追踪器从 JSONL 历史恢复状态，重启后不再误报「前缀已变化」 |
+| **✨ New** | [深度技术指南](./DEEPSEEK_CACHE_GUIDE.md) — 基于两波爬取 30+ 页面、10+ 开源项目的缓存优化文档 |
+| **📊 研究** | 确认生态空白：awesome-deepseek-integration 中 ZERO 工具显式做前缀缓存优化 |
+| **📊 研究** | 分析了 Reasonix（99.82% 命中率）、NanoBot（43k stars，8 层缓存优化）、京东云（集群级 KV Cache 路由）等案例 |
+| **📊 研究** | 识别了 6 大缓存破坏模式（动态前缀注入、全量重发、工具变化、Agent 重建、Lookback 超限、跨实例不共享） |
+| **🐛 Fix** | 成本计算表数量级错误修正 |
+| **🧹 Doc** | README 重写为插件介绍导向（技术细节移至深度指南） |
+
+### 1.1.0 → 1.2.0 变更
 
 ---
 
 ## 🛠️ 使用 | Usage
 
-## 🛠️ 使用 | Usage
 
 安装后插件会在后台静默工作 | Once installed, the plugin works silently:
 

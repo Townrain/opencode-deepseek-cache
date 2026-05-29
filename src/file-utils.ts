@@ -1,5 +1,7 @@
 import { existsSync, readdirSync, renameSync, statSync, unlinkSync } from 'node:fs'
-import { basename, dirname, join } from 'node:path'
+import { basename, dirname, join, parse } from 'node:path'
+
+let statSkipCounter = 0
 
 /**
  * Rotate a file if it exceeds maxSize bytes.
@@ -13,6 +15,8 @@ export function rotateFileIfNeeded(
 ): boolean {
   try {
     if (!existsSync(filePath)) return false
+    statSkipCounter++
+    if (statSkipCounter % 10 !== 0) return false  // only check size every 10 calls
     const stat = statSync(filePath)
     if (stat.size < maxSize) return false
 
@@ -38,5 +42,20 @@ export function rotateFileIfNeeded(
     return true
   } catch {
     return false
+  }
+}
+
+/**
+ * Walk up from startDir looking for a .git directory.
+ * Returns the git root path if found, or empty string when no .git is found.
+ */
+export function findGitRoot(startDir: string): string {
+  const { root } = parse(startDir)
+  let dir = startDir
+  while (true) {
+    if (existsSync(join(dir, '.git'))) return dir
+    const parent = dirname(dir)
+    if (parent === dir || parent === root) return ''
+    dir = parent
   }
 }

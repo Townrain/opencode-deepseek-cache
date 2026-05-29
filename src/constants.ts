@@ -2,7 +2,7 @@
 export const DYNAMIC_PATTERNS: [RegExp, string][] = [
   // ISO timestamps with timezone (UTC Z and offsets +08:00, +05:30, etc.)
   [
-    /(?<![a-zA-Z"']) \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:?\d{2})?(?!["'])/g,
+    /(?<=^|\s)(?<![a-zA-Z"'])\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:?\d{2})?(?!["'])/g,
     '[TIME]',
   ],
   // UUIDs
@@ -25,6 +25,16 @@ export const DYNAMIC_PATTERNS: [RegExp, string][] = [
   // Process IDs in paths
   [/\/proc\/\d+/g, '[PID]'],
 ]
+
+/** Get a copy of dynamic replacement patterns (safe for mutation) */
+export function getDynamicPatterns(): [RegExp, string][] {
+  return [...DYNAMIC_PATTERNS]
+}
+
+/** Add a dynamic replacement pattern */
+export function addDynamicPattern(pattern: [RegExp, string]): void {
+  DYNAMIC_PATTERNS.push(pattern)
+}
 
 /** DeepSeek model-specific pricing (CNY per 1M tokens) */
 export const DEEPSEEK_PRICING_MAP = {
@@ -62,3 +72,19 @@ export function isOfficialDeepSeekEndpoint(apiUrl: string): boolean {
     return false
   }
 }
+
+/** Max JSONL file size before rotation (env: DEEPSEEK_CACHE_MAX_JSONL_SIZE, default 10MB) */
+const rawJsonlSize = Number(process.env.DEEPSEEK_CACHE_MAX_JSONL_SIZE)
+export const MAX_JSONL_SIZE = Number.isFinite(rawJsonlSize) ? rawJsonlSize : 10 * 1024 * 1024
+
+/** Max debug log file size before rotation (env: DEEPSEEK_CACHE_MAX_LOG_SIZE, default 10MB) */
+const rawLogSize = Number(process.env.DEEPSEEK_CACHE_MAX_LOG_SIZE)
+export const MAX_LOG_SIZE = Number.isFinite(rawLogSize) ? rawLogSize : 10 * 1024 * 1024
+
+/** Max session baselines kept in memory (env: DEEPSEEK_CACHE_MAX_SESSIONS, default 1000) */
+const rawMaxSessions = Number(process.env.DEEPSEEK_CACHE_MAX_SESSIONS)
+export const MAX_SESSION_BASELINES = Number.isFinite(rawMaxSessions) ? rawMaxSessions : 1000
+
+/** Session baseline TTL in ms (env: DEEPSEEK_CACHE_SESSION_TTL_MS, default 24h) */
+const rawTtl = Number(process.env.DEEPSEEK_CACHE_SESSION_TTL_MS)
+export const SESSION_BASELINE_TTL_MS = Number.isFinite(rawTtl) ? rawTtl : 86400000
