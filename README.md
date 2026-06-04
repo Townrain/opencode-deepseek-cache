@@ -316,6 +316,43 @@ node -e "console.log(require('./package.json').version)"
 
 ## 📋 变更记录 | Changelog
 
+### v2.1.7 → v2.2.0
+
+v2.2.0 是架构重构版本，将 index.ts 的 569 行单体拆分为清晰的模块化结构，修复了 4 个行为回归。
+
+#### ✨ 架构重构
+
+- ✨ **EventHandler 类** — 将 index.ts 的 290 行内联事件处理逻辑提取为独立的 EventHandler 类
+- ✨ **SessionManager 类** — 管理 session baseline、重试退避、LRU 淘汰
+- ✨ **StatsManager 类** — 管理缓存统计数据和模型 ID
+- ✨ **PersistenceManager 类** — 管理 JSONL 持久化（WAL 模式）
+- ✨ **类型统一** — CacheStats、UsageRecord、BaselineRecord 统一从 types.ts 导入
+- ✨ **代码去重** — forEachJsonlRecord 只在 jsonl/reader.ts 中定义
+
+#### 🐛 Bug 修复
+
+- 🐛 **M6 回归修复** — 修复 `cache.read === undefined` 时 baseline 被错误覆盖的问题，现在保留之前的 cacheRead 值
+- 🐛 **永久退避修复** — 修复 session 重试永久退避使用 `Date.now() + TTL` 而非 `Number.MAX_SAFE_INTEGER` 的问题
+- 🐛 **providerID 大小写修复** — 修复 providerID 未调用 `.toLowerCase()` 导致大小写不一致的问题
+- 🐛 **pluginDisposed 守卫** — 为 EventHandler 添加 disposed 标志，防止卸载后的悬空调用
+
+#### 📊 代码质量
+
+- 📊 **index.ts 行数**：569 → 272 行（减少 52%）
+- 📊 **测试覆盖**：227 → 228 个测试
+- 📊 **TypeScript 类型检查**：通过
+- 📊 **Biome 代码风格检查**：通过
+
+#### 🔍 验证
+
+- ✅ 所有 228 个测试通过
+- ✅ TypeScript 类型检查通过
+- ✅ Biome 代码风格检查通过
+- ✅ 向后兼容：/cache-stats 命令、hook 行为不变
+
+### v2.1.6 → v2.1.7
+
+
 ### v2.1.6 → v2.1.7
 
 v2.1.7 是基于全面代码审查的 bug 修复版本，修复了数据完整性、防御性编码和代码质量问题。

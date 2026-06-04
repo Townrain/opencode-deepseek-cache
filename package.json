@@ -1,6 +1,6 @@
 {
   "name": "opencode-deepseek-cache",
-  "version": "2.1.7",
+  "version": "2.2.0",
   "description": "DeepSeek context caching optimization plugin for OpenCode",
   "type": "module",
   "main": "dist/index.js",
@@ -29,3 +29,4 @@
   },
   "license": "MIT"
 }
+
