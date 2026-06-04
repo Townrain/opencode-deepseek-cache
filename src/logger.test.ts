@@ -6,6 +6,7 @@ vi.mock('fs', () => {
     write: vi.fn().mockReturnValue(true),
     end: vi.fn(),
     on: vi.fn(),
+    once: vi.fn(),
   }
   return {
     createWriteStream: vi.fn().mockReturnValue(mockStream),
@@ -166,9 +167,8 @@ describe('rotation', () => {
 })
 
 describe('backpressure', () => {
-  it('calls console.error when write returns false', async () => {
+  it('buffers writes and registers drain listener when write returns false', async () => {
     const fs = await import('node:fs')
-    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     try {
       // Dispose first to null the stream, then re-init to create a fresh one
       dispose()
@@ -176,13 +176,17 @@ describe('backpressure', () => {
       const mockStream = vi.mocked(fs.createWriteStream).mock.results[0]?.value
       if (mockStream) {
         mockStream.write.mockReturnValue(false)
+        mockStream.once.mockClear()
       }
       log('backpressure test')
-      expect(consoleSpy).toHaveBeenCalledWith(
-        expect.stringContaining('Backpressure')
-      )
+      // Should register drain listener instead of just logging an error
+      expect(mockStream?.once).toHaveBeenCalledWith('drain', expect.any(Function))
     } finally {
-      consoleSpy.mockRestore()
+      // Reset mock for other tests
+      const mockStream = vi.mocked(fs.createWriteStream).mock.results[0]?.value
+      if (mockStream) {
+        mockStream.write.mockReturnValue(true)
+      }
     }
   })
 })

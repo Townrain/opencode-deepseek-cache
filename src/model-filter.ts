@@ -1,4 +1,5 @@
 import { isOfficialDeepSeekEndpoint } from './constants.js'
+
 export { isOfficialDeepSeekEndpoint }
 
 /** Check if a provider ID indicates an official DeepSeek provider. */
@@ -21,4 +22,3 @@ export function isApplicableDeepSeek(check: { apiUrl?: string; providerID?: stri
   if (check.providerID && isOfficialDeepSeekProvider(check.providerID)) return true
   return false
 }
-

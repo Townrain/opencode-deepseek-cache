@@ -12,16 +12,40 @@ vi.mock('./cache-stats.js', () => ({
   loadStatsFromJsonl: vi.fn(() => ({
     totalHitTokens: 0,
     totalMissTokens: 0,
+    totalWriteTokens: 0,
+    totalOutputTokens: 0,
     requestCount: 0,
     prefixChanges: 0,
     firstRequestTime: null,
     lastRequestTime: null,
+    previousHitRate: null,
+    systemTransformCallCount: 0,
+    lastSystemTransformTime: null,
+  })),
+  loadAllFromJsonl: vi.fn(() => ({
+    stats: {
+      totalHitTokens: 0,
+      totalMissTokens: 0,
+      totalWriteTokens: 0,
+      totalOutputTokens: 0,
+      requestCount: 0,
+      prefixChanges: 0,
+      firstRequestTime: null,
+      lastRequestTime: null,
+      previousHitRate: null,
+      systemTransformCallCount: 0,
+      lastSystemTransformTime: null,
+    },
+    fingerprint: null,
+    model: null,
+    baselines: new Map(),
   })),
   appendUsageToJsonl: vi.fn(),
   getCacheReport: vi.fn(() => '# Report'),
   getLastFingerprintFromJsonl: vi.fn(() => ({ fingerprint: null, model: null })),
   saveBaselineToJsonl: vi.fn(),
   loadBaselinesFromJsonl: vi.fn(() => new Map()),
+  getLastCacheWriteFailedAndReset: vi.fn(() => false),
 }))
 
 vi.mock('./fingerprint.js', () => ({
@@ -38,27 +62,37 @@ vi.mock('./model-filter.js', () => ({
 }))
 
 vi.mock('./system-transform.js', () => ({
-  normalizeSystemPrompt: vi.fn(() => ({ changed: false, replacements: 0, fingerprint: 'abc123', normalized: '' })),
+  normalizeSystemPrompt: vi.fn(() => ({
+    changed: false,
+    replacements: 0,
+    fingerprint: 'abc123',
+    normalized: '',
+  })),
 }))
 
 vi.mock('./file-utils.js', () => ({
   findGitRoot: vi.fn((p: string) => p), // default: identity (no .git found)
+  normalizeGitRoot: vi.fn((p: string) => p), // default: identity pass-through
 }))
 
 vi.mock('@opencode-ai/plugin', () => ({ tool: vi.fn((o: any) => o) }))
 vi.mock('./constants.js', () => {
   return {
-    get SESSION_BASELINE_TTL_MS() { return Number(process.env.DEEPSEEK_CACHE_SESSION_TTL_MS) || 86400000 },
-    get MAX_SESSION_BASELINES() { return Number(process.env.DEEPSEEK_CACHE_MAX_SESSIONS) || 1000 },
+    get SESSION_BASELINE_TTL_MS() {
+      const v = Number(process.env.DEEPSEEK_CACHE_SESSION_TTL_MS)
+      return Number.isFinite(v) ? v : 86400000
+    },
+    get MAX_SESSION_BASELINES() {
+      const v = Number(process.env.DEEPSEEK_CACHE_MAX_SESSIONS)
+      return Number.isFinite(v) ? v : 1000
+    },
   }
 })
 
-
 const pm = await import('./index.js')
 const { log, initLogger, dispose: disposeLogger } = await import('./logger.js')
-const { loadStatsFromJsonl, appendUsageToJsonl, getLastFingerprintFromJsonl } = await import(
-  './cache-stats.js'
-)
+const { loadStatsFromJsonl, loadAllFromJsonl, appendUsageToJsonl, getLastFingerprintFromJsonl } =
+  await import('./cache-stats.js')
 const { isApplicableDeepSeek } = await import('./model-filter.js')
 
 beforeEach(() => vi.clearAllMocks())
@@ -69,11 +103,19 @@ async function initPlugin(overrides: any = {}) {
     directory: '/fake/project',
     client: {
       session: {
-        get: vi.fn().mockResolvedValue({
-          data: {
-            tokens: { cache: { read: 500 }, input: 100 },
-            model: { id: 'deepseek-chat', providerID: 'deepseek' },
-          },
+        messages: vi.fn().mockResolvedValue({
+          data: [
+            { info: { role: 'user' }, parts: [] },
+            {
+              info: {
+                role: 'assistant',
+                tokens: { cache: { read: 500 }, input: 100 },
+                modelID: 'deepseek-chat',
+                providerID: 'deepseek',
+              },
+              parts: [],
+            },
+          ],
         }),
       },
     },
@@ -91,8 +133,7 @@ describe('plugin module', () => {
   it('initializes logger and loads stats on init', async () => {
     await initPlugin()
     expect(initLogger).toHaveBeenCalled()
-    expect(loadStatsFromJsonl).toHaveBeenCalled()
-    expect(vi.mocked(getLastFingerprintFromJsonl)).toHaveBeenCalled()
+    expect(loadAllFromJsonl).toHaveBeenCalled()
   })
 })
 
@@ -239,7 +280,7 @@ describe('event handler', () => {
       changed: true,
       replacements: 2,
       fingerprint: 'new-fp',
-      normalized: '',
+      normalized: 'normalized-system-prompt',
     })
     vi.mocked(isApplicableDeepSeek).mockReturnValue(true)
     const hooks = await initPlugin()
@@ -248,7 +289,16 @@ describe('event handler', () => {
       { model: { api: { url: 'https://api.deepseek.com' } } } as any,
       { system: 'test' } as any,
     )
-    expect(vi.mocked(appendUsageToJsonl)).toHaveBeenCalledWith(expect.any(String), 0, 0, 'new-fp', undefined, expect.any(Number))
+    expect(vi.mocked(appendUsageToJsonl)).toHaveBeenCalledWith(
+      expect.any(String),
+      0,
+      0,
+      undefined,
+      undefined,
+      'new-fp',
+      undefined,
+      expect.any(Number),
+    )
   })
 })
 
@@ -286,22 +336,28 @@ describe('cacheStats tool', () => {
   })
 })
 
-describe('R2: dangling session.get promise', () => {
-  it('does not crash when session.get rejects after timeout', async () => {
-    // Arrange: session.get rejects after a delay, timer fires immediately
+describe('R2: dangling session.messages promise', () => {
+  it('does not crash when session.messages rejects after timeout', async () => {
+    // Arrange: session.messages rejects after a delay, timer fires immediately
     let unhandledRejection: Error | undefined
-    process.on('unhandledRejection', (reason) => {
+    const rejectionHandler = (reason: unknown) => {
       unhandledRejection = reason as Error
-    })
+    }
+    process.on('unhandledRejection', rejectionHandler)
 
     try {
       vi.mocked(isApplicableDeepSeek).mockReturnValue(true)
       const hooks = await initPlugin({
         client: {
           session: {
-            get: vi.fn().mockImplementation(
-              () => new Promise((_resolve, reject) => setTimeout(() => reject(new Error('network error')), 50)),
-            ),
+            messages: vi
+              .fn()
+              .mockImplementation(
+                () =>
+                  new Promise((_resolve, reject) =>
+                    setTimeout(() => reject(new Error('network error')), 50),
+                  ),
+              ),
           },
         },
       })
@@ -317,9 +373,7 @@ describe('R2: dangling session.get promise', () => {
       // Assert: no unhandled rejection
       expect(unhandledRejection).toBeUndefined()
     } finally {
-      process.removeListener('unhandledRejection', (reason) => {
-        unhandledRejection = reason as Error
-      })
+      process.removeListener('unhandledRejection', rejectionHandler)
     }
   })
 })
@@ -368,25 +422,52 @@ describe('dispose hook', () => {
 describe('baseline persistence — reload does not double-count', () => {
   it('restores baselines from JSONL and only records deltas after reload', async () => {
     // Arrange: simulate a previous session that recorded 500 hit, 100 miss tokens
-    const { loadBaselinesFromJsonl, saveBaselineToJsonl } = await import('./cache-stats.js')
-    vi.mocked(loadBaselinesFromJsonl).mockReturnValue(
-      new Map([['session-reload', { input: 100, cacheRead: 500 }]]),
-    )
+    vi.mocked(loadAllFromJsonl).mockReturnValue({
+      stats: {
+        totalHitTokens: 0,
+        totalMissTokens: 0,
+        totalWriteTokens: 0,
+        totalOutputTokens: 0,
+        requestCount: 0,
+        prefixChanges: 0,
+        firstRequestTime: null,
+        lastRequestTime: null,
+        previousHitRate: null,
+        systemTransformCallCount: 0,
+        lastSystemTransformTime: null,
+      },
+      fingerprint: null,
+      model: null,
+      baselines: new Map([
+        [
+          'session-reload',
+          { input: 100, cacheRead: 500, cacheWrite: 0, output: 0, lastAccess: Date.now() },
+        ],
+      ]),
+    })
     vi.mocked(isApplicableDeepSeek).mockReturnValue(true)
 
     const hooks = await initPlugin()
 
     // Act: fire session.idle with same session, now at 600 hit, 150 miss
     // (delta should be 100 hit, 50 miss — NOT 600 hit, 150 miss)
-    const mockGet = vi.fn().mockResolvedValue({
-      data: {
-        tokens: { cache: { read: 600 }, input: 150 },
-        model: { id: 'deepseek-chat', providerID: 'deepseek' },
-      },
+    const mockMessages = vi.fn().mockResolvedValue({
+      data: [
+        { info: { role: 'user' }, parts: [] },
+        {
+          info: {
+            role: 'assistant',
+            tokens: { cache: { read: 600 }, input: 150 },
+            modelID: 'deepseek-chat',
+            providerID: 'deepseek',
+          },
+          parts: [],
+        },
+      ],
     })
     // Re-init plugin with custom client that returns our session data
     const hooks2 = await initPlugin({
-      client: { session: { get: mockGet } },
+      client: { session: { messages: mockMessages } },
     })
 
     vi.mocked(appendUsageToJsonl).mockClear()
@@ -400,7 +481,7 @@ describe('baseline persistence — reload does not double-count', () => {
     const deltaHit = call[1] // hitTokens arg
     const deltaMiss = call[2] // missTokens arg
     expect(deltaHit).toBe(100) // 600 - 500
-    expect(deltaMiss).toBe(50)  // 150 - 100
+    expect(deltaMiss).toBe(50) // 150 - 100
   })
 
   it('persists baseline via saveBaselineToJsonl on session.idle', async () => {
@@ -419,8 +500,28 @@ describe('baseline persistence — reload does not double-count', () => {
       's-persist',
       expect.any(Number),
       expect.any(Number),
+      expect.any(Number),
+      expect.any(Number),
       expect.any(String),
     )
+  })
+  it('deduplicates baseline writes when values unchanged', async () => {
+    const { saveBaselineToJsonl } = await import('./cache-stats.js')
+    vi.mocked(isApplicableDeepSeek).mockReturnValue(true)
+
+    const hooks = await initPlugin()
+    vi.mocked(saveBaselineToJsonl).mockClear()
+
+    // Fire session.idle twice with same session
+    await hooks.event({
+      event: { type: 'session.idle' as any, properties: { sessionID: 's-dedup' } },
+    })
+    await hooks.event({
+      event: { type: 'session.idle' as any, properties: { sessionID: 's-dedup' } },
+    })
+
+    // Should only write once, not twice
+    expect(vi.mocked(saveBaselineToJsonl)).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -428,39 +529,64 @@ describe('H3: cross-model token leakage prevention', () => {
   it('does not leak non-DeepSeek tokens into DeepSeek stats', async () => {
     // Arrange: simulate interleaved DS and non-DS sessions with CUMULATIVE tokens
     // session.tokens is a running total across all models in the session
-    const mockGet = vi.fn()
+    const mockMessages = vi
+      .fn()
       // DeepSeek call #1: cumulative 500 hit, 100 miss
       .mockResolvedValueOnce({
-        data: {
-          tokens: { cache: { read: 500 }, input: 100 },
-          model: { id: 'deepseek-chat', providerID: 'deepseek' },
-        },
+        data: [
+          { info: { role: 'user' }, parts: [] },
+          {
+            info: {
+              role: 'assistant',
+              tokens: { cache: { read: 500 }, input: 100 },
+              modelID: 'deepseek-chat',
+              providerID: 'deepseek',
+            },
+            parts: [],
+          },
+        ],
       })
       // Non-DeepSeek call: cumulative 500 hit, 400 miss (added 300 input)
       .mockResolvedValueOnce({
-        data: {
-          tokens: { cache: { read: 500 }, input: 400 },
-          model: { id: 'gpt-4', providerID: 'openai' },
-        },
+        data: [
+          { info: { role: 'user' }, parts: [] },
+          {
+            info: {
+              role: 'assistant',
+              tokens: { cache: { read: 500 }, input: 400 },
+              modelID: 'gpt-4',
+              providerID: 'openai',
+            },
+            parts: [],
+          },
+        ],
       })
       // DeepSeek call #2: cumulative 800 hit, 600 miss (added 300 hit, 200 miss)
       .mockResolvedValueOnce({
-        data: {
-          tokens: { cache: { read: 800 }, input: 600 },
-          model: { id: 'deepseek-chat', providerID: 'deepseek' },
-        },
+        data: [
+          { info: { role: 'user' }, parts: [] },
+          {
+            info: {
+              role: 'assistant',
+              tokens: { cache: { read: 800 }, input: 600 },
+              modelID: 'deepseek-chat',
+              providerID: 'deepseek',
+            },
+            parts: [],
+          },
+        ],
       })
 
-    const hooks = await initPlugin({ client: { session: { get: mockGet } } })
+    const hooks = await initPlugin({ client: { session: { messages: mockMessages } } })
 
     // Act: fire 3 events
-    vi.mocked(isApplicableDeepSeek).mockReturnValueOnce(true)   // DS #1
+    vi.mocked(isApplicableDeepSeek).mockReturnValueOnce(true) // DS #1
     await hooks.event({ event: { type: 'session.idle' as any, properties: { sessionID: 's1' } } })
 
-    vi.mocked(isApplicableDeepSeek).mockReturnValueOnce(false)  // non-DS
+    vi.mocked(isApplicableDeepSeek).mockReturnValueOnce(false) // non-DS
     await hooks.event({ event: { type: 'session.idle' as any, properties: { sessionID: 's1' } } })
 
-    vi.mocked(isApplicableDeepSeek).mockReturnValueOnce(true)   // DS #2
+    vi.mocked(isApplicableDeepSeek).mockReturnValueOnce(true) // DS #2
     vi.mocked(appendUsageToJsonl).mockClear()
     await hooks.event({ event: { type: 'session.idle' as any, properties: { sessionID: 's1' } } })
 
@@ -472,33 +598,48 @@ describe('H3: cross-model token leakage prevention', () => {
     const call = vi.mocked(appendUsageToJsonl).mock.calls[0]!
     const deltaHit = call[1]
     const deltaMiss = call[2]
-    expect(deltaHit).toBe(300)   // 800 - 500
-    expect(deltaMiss).toBe(200)  // 600 - 400 (not 600 - 100)
+    expect(deltaHit).toBe(300) // 800 - 500
+    expect(deltaMiss).toBe(200) // 600 - 400 (not 600 - 100)
+  })
 })
-})
-
-
 
 describe('M6: cache.read undefined handling', () => {
   it('skips stats when cache.read is undefined but updates baseline', async () => {
-    const mockGet = vi.fn()
+    const mockMessages = vi
+      .fn()
       // First call: establish baseline with cache.read = 500
       .mockResolvedValueOnce({
-        data: {
-          tokens: { cache: { read: 500 }, input: 100 },
-          model: { id: 'deepseek-chat', providerID: 'deepseek' },
-        },
+        data: [
+          { info: { role: 'user' }, parts: [] },
+          {
+            info: {
+              role: 'assistant',
+              tokens: { cache: { read: 500 }, input: 100 },
+              modelID: 'deepseek-chat',
+              providerID: 'deepseek',
+            },
+            parts: [],
+          },
+        ],
       })
       // Second call: cache.read is undefined (API didn't report it)
       .mockResolvedValueOnce({
-        data: {
-          tokens: { input: 200 },  // no cache property at all
-          model: { id: 'deepseek-chat', providerID: 'deepseek' },
-        },
+        data: [
+          { info: { role: 'user' }, parts: [] },
+          {
+            info: {
+              role: 'assistant',
+              tokens: { input: 200 },
+              modelID: 'deepseek-chat',
+              providerID: 'deepseek',
+            },
+            parts: [],
+          },
+        ],
       })
 
     vi.mocked(isApplicableDeepSeek).mockReturnValue(true)
-    const hooks = await initPlugin({ client: { session: { get: mockGet } } })
+    const hooks = await initPlugin({ client: { session: { messages: mockMessages } } })
 
     // First event: establish baseline
     await hooks.event({ event: { type: 'session.idle' as any, properties: { sessionID: 's1' } } })
@@ -516,13 +657,81 @@ describe('M6: cache.read undefined handling', () => {
       expect.objectContaining({ sessionID: 's1' }),
     )
   })
+
+  it('M6 updates lastWrites to prevent duplicate baseline persistence', async () => {
+    const mockMessages = vi
+      .fn()
+      // First call: establish baseline with cache.read = 500
+      .mockResolvedValueOnce({
+        data: [
+          { info: { role: 'user' }, parts: [] },
+          {
+            info: {
+              role: 'assistant',
+              tokens: { cache: { read: 500 }, input: 100 },
+              modelID: 'deepseek-chat',
+              providerID: 'deepseek',
+            },
+            parts: [],
+          },
+        ],
+      })
+      // Second call: cache.read is undefined
+      .mockResolvedValueOnce({
+        data: [
+          { info: { role: 'user' }, parts: [] },
+          {
+            info: {
+              role: 'assistant',
+              tokens: { input: 200 },
+              modelID: 'deepseek-chat',
+              providerID: 'deepseek',
+            },
+            parts: [],
+          },
+        ],
+      })
+      // Third call: same tokens as second (should NOT trigger persist)
+      .mockResolvedValueOnce({
+        data: [
+          { info: { role: 'user' }, parts: [] },
+          {
+            info: {
+              role: 'assistant',
+              tokens: { input: 200 },
+              modelID: 'deepseek-chat',
+              providerID: 'deepseek',
+            },
+            parts: [],
+          },
+        ],
+      })
+
+    vi.mocked(isApplicableDeepSeek).mockReturnValue(true)
+    const hooks = await initPlugin({ client: { session: { messages: mockMessages } } })
+    const { saveBaselineToJsonl } = await import('./cache-stats.js')
+
+    // First event: establish baseline
+    await hooks.event({ event: { type: 'session.idle' as any, properties: { sessionID: 's1' } } })
+    vi.mocked(saveBaselineToJsonl).mockClear()
+
+    // Second event: cache.read is undefined — should update lastWrites
+    await hooks.event({ event: { type: 'session.idle' as any, properties: { sessionID: 's1' } } })
+
+    // Third event: same tokens — should NOT trigger saveBaselineToJsonl
+    vi.mocked(saveBaselineToJsonl).mockClear()
+    await hooks.event({ event: { type: 'session.idle' as any, properties: { sessionID: 's1' } } })
+
+    // Assert: saveBaselineToJsonl should NOT be called (lastWrites was updated in M6)
+    expect(vi.mocked(saveBaselineToJsonl)).not.toHaveBeenCalled()
+  })
 })
 
 describe('H5: TTL-based session baseline eviction', () => {
-  it.skip('sweeps expired baselines via TTL', async () => {
+  it('sweeps expired baselines via TTL', async () => {
     vi.mocked(isApplicableDeepSeek).mockReturnValue(true)
     process.env.DEEPSEEK_CACHE_SESSION_TTL_MS = '0'
-    
+
     // Use fake timers from the start so all Date.now() calls are controlled
     vi.useFakeTimers()
     vi.setSystemTime(1000)
@@ -551,15 +760,29 @@ describe('H5: TTL-based session baseline eviction', () => {
     // Since baseline was evicted, it's treated as first call — delta should be non-zero
     expect(vi.mocked(appendUsageToJsonl)).toHaveBeenCalled()
     delete process.env.DEEPSEEK_CACHE_SESSION_TTL_MS
-})
+  })
 })
 
 describe('M5: cachedModelId restored from JSONL history', () => {
-  it('sets cachedModelId from getLastFingerprintFromJsonl on init', async () => {
-    const { getLastFingerprintFromJsonl, getCacheReport } = await import('./cache-stats.js')
-    vi.mocked(getLastFingerprintFromJsonl).mockReturnValue({
+  it('sets cachedModelId from loadAllFromJsonl on init', async () => {
+    const { getCacheReport } = await import('./cache-stats.js')
+    vi.mocked(loadAllFromJsonl).mockReturnValue({
+      stats: {
+        totalHitTokens: 0,
+        totalMissTokens: 0,
+        totalWriteTokens: 0,
+        totalOutputTokens: 0,
+        requestCount: 0,
+        prefixChanges: 0,
+        firstRequestTime: null,
+        lastRequestTime: null,
+        previousHitRate: null,
+        systemTransformCallCount: 0,
+        lastSystemTransformTime: null,
+      },
       fingerprint: 'test-fp',
       model: 'deepseek-reasoner',
+      baselines: new Map(),
     })
 
     const hooks = await initPlugin()
@@ -574,5 +797,103 @@ describe('M5: cachedModelId restored from JSONL history', () => {
       expect.anything(),
       'deepseek-reasoner',
     )
+  })
+})
+describe('B5: orphaned sessionRetryState cleanup', () => {
+  it('cleans up permanently-backed-off retry entries that have no baseline', async () => {
+    vi.mocked(isApplicableDeepSeek).mockReturnValue(true)
+    vi.useFakeTimers()
+    vi.setSystemTime(1000000)
+
+    const failMessages = vi
+      .fn()
+      // 4 calls for s-forever-fail: all reject (triggers permanent backoff)
+      .mockRejectedValueOnce(new Error('api error 1'))
+      .mockRejectedValueOnce(new Error('api error 2'))
+      .mockRejectedValueOnce(new Error('api error 3'))
+      .mockRejectedValueOnce(new Error('api error 4'))
+      // Call 5 is for s-good (succeeds, triggers sweep)
+      .mockResolvedValueOnce({
+        data: [
+          { info: { role: 'user' }, parts: [] },
+          {
+            info: {
+              role: 'assistant',
+              tokens: { cache: { read: 500 }, input: 100 },
+              modelID: 'deepseek-chat',
+              providerID: 'deepseek',
+            },
+            parts: [],
+          },
+        ],
+      })
+      // Call 6: after sweep, s-forever-fail should be able to retry
+      .mockResolvedValueOnce({
+        data: [
+          { info: { role: 'user' }, parts: [] },
+          {
+            info: {
+              role: 'assistant',
+              tokens: { cache: { read: 600 }, input: 200 },
+              modelID: 'deepseek-chat',
+              providerID: 'deepseek',
+            },
+            parts: [],
+          },
+        ],
+      })
+
+    const hooks = await initPlugin({ client: { session: { messages: failMessages } } })
+
+    // Event 1: fails → count=1, backoff=1s
+    await hooks.event({
+      event: { type: 'session.idle' as any, properties: { sessionID: 's-forever-fail' } },
+    })
+    expect(failMessages).toHaveBeenCalledTimes(1)
+
+    // Advance 1.5s — past first backoff (1s)
+    vi.setSystemTime(1001500)
+
+    // Event 2: backoff elapsed → fails → count=2, backoff=2s
+    await hooks.event({
+      event: { type: 'session.idle' as any, properties: { sessionID: 's-forever-fail' } },
+    })
+    expect(failMessages).toHaveBeenCalledTimes(2)
+
+    // Advance 2.5s — past second backoff (2s)
+    vi.setSystemTime(1004000)
+
+    // Event 3: backoff elapsed → fails → count=3, backoff=4s
+    await hooks.event({
+      event: { type: 'session.idle' as any, properties: { sessionID: 's-forever-fail' } },
+    })
+    expect(failMessages).toHaveBeenCalledTimes(3)
+
+    // Advance 4.5s — past third backoff (4s)
+    vi.setSystemTime(1008500)
+
+    // Event 4: backoff elapsed → fails → count=4 > MAX_EVENT_RETRIES(3) → PERMANENT backoff
+    await hooks.event({
+      event: { type: 'session.idle' as any, properties: { sessionID: 's-forever-fail' } },
+    })
+    expect(failMessages).toHaveBeenCalledTimes(4)
+
+    // Fire 1 successful event for s-good — triggers baseline sweep
+    // which also runs the B5 orphaned retryState sweep (s-forever-fail has no baseline)
+    await hooks.event({
+      event: { type: 'session.idle' as any, properties: { sessionID: 's-good' } },
+    })
+    expect(failMessages).toHaveBeenCalledTimes(5) // s-good event
+
+    // Now fire another event for s-forever-fail
+    // Without B5 fix: would be skipped (permanent backoff MAX_SAFE_INTEGER still active)
+    // With B5 fix: retryState was cleaned by sweep, so messages is called again
+    await hooks.event({
+      event: { type: 'session.idle' as any, properties: { sessionID: 's-forever-fail' } },
+    })
+    // messages should have been called again (call count = 6)
+    expect(failMessages).toHaveBeenCalledTimes(6)
+
+    vi.useRealTimers()
   })
 })

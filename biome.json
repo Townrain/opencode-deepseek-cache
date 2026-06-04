@@ -5,7 +5,7 @@
   },
   "files": {
     "ignoreUnknown": true,
-    "includes": ["**", "!node_modules", "!dist", "!.deepseek-cache-logs"]
+    "includes": ["**", "!node_modules", "!dist", "!.deepseek-cache-logs", "!.opencode", "!.omo"]
   },
   "formatter": {
     "enabled": true,
@@ -40,6 +40,22 @@
         "rules": {
           "correctness": {
             "noUnusedVariables": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": ["src/**/*.test.ts"],
+      "linter": {
+        "rules": {
+          "correctness": {
+            "noUnusedVariables": "off"
+          },
+          "suspicious": {
+            "noExplicitAny": "off"
+          },
+          "style": {
+            "noNonNullAssertion": "off"
           }
         }
       }

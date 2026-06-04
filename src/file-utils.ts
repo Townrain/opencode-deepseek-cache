@@ -1,7 +1,16 @@
 import { existsSync, readdirSync, renameSync, statSync, unlinkSync } from 'node:fs'
 import { basename, dirname, join, parse } from 'node:path'
 
-let statSkipCounter = 0
+// Per-file skip counters: prevents logger rotation from affecting JSONL rotation and vice versa
+const statSkipCounters = new Map<string, number>()
+
+/**
+ * Reset skip counters for testing.
+ * Only use in tests.
+ */
+export function resetSkipCounters(): void {
+  statSkipCounters.clear()
+}
 
 /**
  * Rotate a file if it exceeds maxSize bytes.
@@ -15,8 +24,9 @@ export function rotateFileIfNeeded(
 ): boolean {
   try {
     if (!existsSync(filePath)) return false
-    statSkipCounter++
-    if (statSkipCounter % 10 !== 0) return false  // only check size every 10 calls
+    const count = (statSkipCounters.get(filePath) ?? 0) + 1
+    statSkipCounters.set(filePath, count)
+    if (count % 10 !== 0) return false
     const stat = statSync(filePath)
     if (stat.size < maxSize) return false
 
@@ -58,4 +68,41 @@ export function findGitRoot(startDir: string): string {
     if (parent === dir || parent === root) return ''
     dir = parent
   }
+}
+
+/**
+ * Normalize a git root path for cross-platform user_id consistency.
+ * - Converts backslashes to forward slashes
+ * - Normalizes WSL2 /mnt/[drive]/ paths to Windows drive letter form
+ * - Lowercases path segments for case-insensitivity
+ * - Preserves drive letter uppercase (D: not d:)
+ *
+ * This ensures Windows and WSL2 produce identical user_id hashes,
+ * enabling cross-terminal KV Cache pooling.
+ */
+export function normalizeGitRoot(path: string): string {
+  if (!path) return path
+
+  // Step 1: Convert backslashes to forward slashes
+  let normalized = path.replace(/\\/g, '/')
+
+  // Step 2: Normalize WSL2 /mnt/[drive]/ paths to Windows drive letter form
+  // e.g., /mnt/d/foo/bar → D:/foo/bar
+  normalized = normalized.replace(
+    /^\/mnt\/([a-zA-Z])\//,
+    (_, drive: string) => `${drive.toUpperCase()}:/`,
+  )
+
+  // Step 2.5: Normalize Windows drive letter to uppercase (d: → D:)
+  normalized = normalized.replace(/^([a-zA-Z]):/, (_, drive: string) => `${drive.toUpperCase()}:`)
+
+  // Step 3: Lowercase for case-insensitivity, preserving drive letter uppercase
+  const driveMatch = normalized.match(/^([A-Z]:)(.*)$/)
+  if (driveMatch) {
+    normalized = driveMatch[1] + driveMatch[2].toLowerCase()
+  } else {
+    normalized = normalized.toLowerCase()
+  }
+
+  return normalized
 }

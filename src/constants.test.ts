@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   DEEPSEEK_PRICES,
@@ -308,5 +308,69 @@ describe('isOfficialDeepSeekEndpoint', () => {
   it('returns false for invalid URL', () => {
     expect(isOfficialDeepSeekEndpoint('')).toBe(false)
     expect(isOfficialDeepSeekEndpoint('not-a-url')).toBe(false)
+  })
+})
+
+describe('getPricingWithOverrides', () => {
+  const original = {
+    cacheMiss: process.env.DEEPSEEK_PRICE_CACHE_MISS,
+    cacheHit: process.env.DEEPSEEK_PRICE_CACHE_HIT,
+    cacheWrite: process.env.DEEPSEEK_PRICE_CACHE_WRITE,
+    output: process.env.DEEPSEEK_PRICE_OUTPUT,
+  }
+
+  beforeEach(() => {
+    delete process.env.DEEPSEEK_PRICE_CACHE_MISS
+    delete process.env.DEEPSEEK_PRICE_CACHE_HIT
+    delete process.env.DEEPSEEK_PRICE_CACHE_WRITE
+    delete process.env.DEEPSEEK_PRICE_OUTPUT
+    vi.resetModules()
+  })
+
+  afterEach(() => {
+    for (const [key, val] of Object.entries(original)) {
+      if (val !== undefined) {
+        process.env[key] = val
+      } else {
+        delete process.env[key]
+      }
+    }
+  })
+
+  it('returns base pricing when no env vars set', async () => {
+    const { getPricingWithOverrides } = await import('./constants.js')
+    const pricing = getPricingWithOverrides('deepseek-chat')
+    expect(pricing.cacheMiss).toBe(1.0)
+    expect(pricing.cacheHit).toBe(0.02)
+  })
+
+  it('overrides pricing with valid env vars', async () => {
+    process.env.DEEPSEEK_PRICE_CACHE_MISS = '2.5'
+    const { getPricingWithOverrides } = await import('./constants.js')
+    const pricing = getPricingWithOverrides('deepseek-chat')
+    expect(pricing.cacheMiss).toBe(2.5)
+  })
+
+  it('does NOT treat empty string as zero (P0 bug fix)', async () => {
+    process.env.DEEPSEEK_PRICE_CACHE_MISS = ''
+    process.env.DEEPSEEK_PRICE_CACHE_HIT = ''
+    const { getPricingWithOverrides } = await import('./constants.js')
+    const pricing = getPricingWithOverrides('deepseek-chat')
+    // Empty string should fall back to base pricing, NOT be treated as 0
+    expect(pricing.cacheMiss).toBe(1.0)
+    expect(pricing.cacheHit).toBe(0.02)
+  })
+
+  it('does NOT treat empty string as zero for size limits', async () => {
+    process.env.DEEPSEEK_CACHE_MAX_JSONL_SIZE = ''
+    process.env.DEEPSEEK_CACHE_MAX_LOG_SIZE = ''
+    process.env.DEEPSEEK_CACHE_MAX_SESSIONS = ''
+    process.env.DEEPSEEK_CACHE_SESSION_TTL_MS = ''
+    const constants = await import('./constants.js')
+    // Empty string should fall back to defaults, NOT be treated as 0
+    expect(constants.MAX_JSONL_SIZE).toBe(10 * 1024 * 1024)
+    expect(constants.MAX_LOG_SIZE).toBe(10 * 1024 * 1024)
+    expect(constants.MAX_SESSION_BASELINES).toBe(1000)
+    expect(constants.SESSION_BASELINE_TTL_MS).toBe(86400000)
   })
 })

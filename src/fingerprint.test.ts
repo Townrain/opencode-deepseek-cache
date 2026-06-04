@@ -79,24 +79,24 @@ describe('createFingerprintTracker', () => {
       expect(tracker.getLastFingerprint()).toBe(result.fingerprint)
     })
 
-  it('compute receives raw text, not hex fingerprint', () => {
-    const tracker = createFingerprintTracker()
-    // First call with raw text — should work normally
-    const first = tracker.compute('hello world')
-    expect(first.changed).toBe(false)
-    expect(first.fingerprint).toHaveLength(16)
+    it('compute receives raw text, not hex fingerprint', () => {
+      const tracker = createFingerprintTracker()
+      // First call with raw text — should work normally
+      const first = tracker.compute('hello world')
+      expect(first.changed).toBe(false)
+      expect(first.fingerprint).toHaveLength(16)
 
-    // Second call with different raw text — should detect change
-    const second = tracker.compute('goodbye world')
-    expect(second.changed).toBe(true)
-    expect(second.fingerprint).not.toBe(first.fingerprint)
-    expect(second.previous).toBe(first.fingerprint)
+      // Second call with different raw text — should detect change
+      const second = tracker.compute('goodbye world')
+      expect(second.changed).toBe(true)
+      expect(second.fingerprint).not.toBe(first.fingerprint)
+      expect(second.previous).toBe(first.fingerprint)
 
-    // Verify the hash is from raw text, not double-hashed
-    // computeFingerprint('hello world') should equal computeFingerprint('hello world')
-    // (deterministic), but computeFingerprint('a1b2c3...16hex') != computeFingerprint('hello world')
-    const rawFp = computeFingerprint('hello world')
-    expect(first.fingerprint).toBe(rawFp)
-  })
+      // Verify the hash is from raw text, not double-hashed
+      // computeFingerprint('hello world') should equal computeFingerprint('hello world')
+      // (deterministic), but computeFingerprint('a1b2c3...16hex') != computeFingerprint('hello world')
+      const rawFp = computeFingerprint('hello world')
+      expect(first.fingerprint).toBe(rawFp)
+    })
   })
 })

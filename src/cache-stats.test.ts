@@ -42,10 +42,15 @@ describe('createCacheStats', () => {
     expect(stats).toEqual({
       totalHitTokens: 0,
       totalMissTokens: 0,
+      totalWriteTokens: 0,
+      totalOutputTokens: 0,
       requestCount: 0,
       prefixChanges: 0,
       firstRequestTime: null,
       lastRequestTime: null,
+      previousHitRate: null,
+      systemTransformCallCount: 0,
+      lastSystemTransformTime: null,
     })
   })
 })
@@ -117,7 +122,9 @@ describe('loadStatsFromJsonl', () => {
     vi.mocked(fs.readFileSync).mockReturnValue('{"hit":100,"miss":50}\n')
     const stats = loadStatsFromJsonl('/fake/path.jsonl')
     expect(stats.requestCount).toBe(1)
-    expect(stats.firstRequestTime).not.toBeNull()
+    // firstRequestTime should remain null when timestamp is missing/corrupted (t=0)
+    // to avoid incorrect session duration calculations
+    expect(stats.firstRequestTime).toBeNull()
   })
 
   it('does not count fingerprint-only records in requestCount', () => {
@@ -135,9 +142,7 @@ describe('loadStatsFromJsonl', () => {
   it('counts usage records normally', () => {
     vi.mocked(fs.existsSync).mockReturnValue(true)
     vi.mocked(fs.readdirSync).mockReturnValue(['path.jsonl'] as any)
-    vi.mocked(fs.readFileSync).mockReturnValue(
-      '{"t":1000,"hit":500,"miss":100,"type":"usage"}\n',
-    )
+    vi.mocked(fs.readFileSync).mockReturnValue('{"t":1000,"hit":500,"miss":100,"type":"usage"}\n')
     const stats = loadStatsFromJsonl('/fake/path.jsonl')
     expect(stats.requestCount).toBe(1)
     expect(stats.totalHitTokens).toBe(500)
@@ -150,7 +155,7 @@ describe('appendUsageToJsonl', () => {
     vi.mocked(fs.existsSync).mockReturnValue(false)
     vi.mocked(fs.appendFileSync).mockImplementation(() => {})
 
-    appendUsageToJsonl('/fake/dir/file.jsonl', 500, 100, 'abc123')
+    appendUsageToJsonl('/fake/dir/file.jsonl', 500, 100, undefined, undefined, 'abc123')
 
     expect(fs.mkdirSync).toHaveBeenCalledWith('/fake/dir', { recursive: true })
     expect(fs.appendFileSync).toHaveBeenCalledTimes(1)
@@ -190,6 +195,37 @@ describe('getCacheReport', () => {
     expect(report).toContain('DeepSeek Cache Dashboard')
     expect(report).toContain('0.0%')
     expect(report).toContain('0.0000')
+  })
+
+  it('generates report with write tokens', () => {
+    const stats = {
+      totalHitTokens: 900000,
+      totalMissTokens: 100000,
+      totalWriteTokens: 50000,
+      requestCount: 50,
+      prefixChanges: 0,
+      firstRequestTime: 1000000,
+      lastRequestTime: 2000000,
+    }
+    const report = getCacheReport(stats)
+    expect(report).toContain('缓存写 Tokens')
+    expect(report).toContain('50,000')
+  })
+
+  it('generates report with output tokens', () => {
+    const stats = {
+      totalHitTokens: 900000,
+      totalMissTokens: 100000,
+      totalWriteTokens: 50000,
+      totalOutputTokens: 25000,
+      requestCount: 50,
+      prefixChanges: 0,
+      firstRequestTime: 1000000,
+      lastRequestTime: 2000000,
+    }
+    const report = getCacheReport(stats)
+    expect(report).toContain('输出 Tokens')
+    expect(report).toContain('25,000')
   })
 
   it('generates report with data', () => {
@@ -346,7 +382,7 @@ describe('saveBaselineToJsonl', () => {
     vi.mocked(fs.existsSync).mockReturnValue(false)
     vi.mocked(fs.appendFileSync).mockImplementation(() => {})
 
-    saveBaselineToJsonl('/fake/dir/file.jsonl', 'session-1', 100, 500, 'fp123')
+    saveBaselineToJsonl('/fake/dir/file.jsonl', 'session-1', 100, 500, 0, 0, 'fp123')
 
     expect(fs.mkdirSync).toHaveBeenCalledWith('/fake/dir', { recursive: true })
     expect(fs.appendFileSync).toHaveBeenCalledTimes(1)
@@ -365,7 +401,7 @@ describe('saveBaselineToJsonl', () => {
     vi.mocked(fs.existsSync).mockReturnValue(true)
     vi.mocked(fs.appendFileSync).mockImplementation(() => {})
 
-    saveBaselineToJsonl('/fake/file.jsonl', 's2', 200, 800)
+    saveBaselineToJsonl('/fake/file.jsonl', 's2', 200, 800, 0)
 
     const record = JSON.parse(vi.mocked(fs.appendFileSync).mock.calls[0]?.[1] as string)
     expect(record.type).toBe('baseline')
@@ -377,7 +413,7 @@ describe('saveBaselineToJsonl', () => {
     vi.mocked(fs.appendFileSync).mockImplementation(() => {
       throw new Error('write failed')
     })
-    expect(() => saveBaselineToJsonl('/fake/file.jsonl', 's1', 100, 500)).not.toThrow()
+    expect(() => saveBaselineToJsonl('/fake/file.jsonl', 's1', 100, 500, 0)).not.toThrow()
   })
 })
 
@@ -389,36 +425,62 @@ describe('loadBaselinesFromJsonl', () => {
   })
 
   it('loads baseline records from JSONL', () => {
+    const now = Date.now()
+    const t1 = now - 1000 // 1 second ago (within TTL)
+    const t2 = now - 500 // 0.5 seconds ago (within TTL)
     vi.mocked(fs.existsSync).mockReturnValue(true)
     vi.mocked(fs.readdirSync).mockReturnValue(['path.jsonl'] as any)
     vi.mocked(fs.readFileSync).mockReturnValue(
-      '{"t":1000,"type":"baseline","sessionID":"s1","input":100,"cacheRead":500}\n' +
-        '{"t":2000,"type":"baseline","sessionID":"s2","input":200,"cacheRead":800}\n',
+      `{"t":${t1},"type":"baseline","sessionID":"s1","input":100,"cacheRead":500}\n` +
+        `{"t":${t2},"type":"baseline","sessionID":"s2","input":200,"cacheRead":800}\n`,
     )
     const result = loadBaselinesFromJsonl('/fake/path.jsonl')
     expect(result.size).toBe(2)
-    expect(result.get('s1')).toEqual({ input: 100, cacheRead: 500 })
-    expect(result.get('s2')).toEqual({ input: 200, cacheRead: 800 })
+    expect(result.get('s1')).toEqual({
+      input: 100,
+      cacheRead: 500,
+      cacheWrite: 0,
+      output: 0,
+      lastAccess: t1,
+    })
+    expect(result.get('s2')).toEqual({
+      input: 200,
+      cacheRead: 800,
+      cacheWrite: 0,
+      output: 0,
+      lastAccess: t2,
+    })
   })
 
   it('keeps latest baseline per sessionID', () => {
+    const now = Date.now()
+    const t1 = now - 1000 // 1 second ago (within TTL)
+    const t2 = now - 500 // 0.5 seconds ago (within TTL, more recent)
     vi.mocked(fs.existsSync).mockReturnValue(true)
     vi.mocked(fs.readdirSync).mockReturnValue(['path.jsonl'] as any)
     vi.mocked(fs.readFileSync).mockReturnValue(
-      '{"t":1000,"type":"baseline","sessionID":"s1","input":100,"cacheRead":500}\n' +
-        '{"t":2000,"type":"baseline","sessionID":"s1","input":300,"cacheRead":900}\n',
+      `{"t":${t1},"type":"baseline","sessionID":"s1","input":100,"cacheRead":500}\n` +
+        `{"t":${t2},"type":"baseline","sessionID":"s1","input":300,"cacheRead":900}\n`,
     )
     const result = loadBaselinesFromJsonl('/fake/path.jsonl')
     expect(result.size).toBe(1)
-    expect(result.get('s1')).toEqual({ input: 300, cacheRead: 900 })
+    expect(result.get('s1')).toEqual({
+      input: 300,
+      cacheRead: 900,
+      cacheWrite: 0,
+      output: 0,
+      lastAccess: t2,
+    })
   })
 
   it('ignores non-baseline records', () => {
+    const now = Date.now()
+    const t1 = now - 1000 // 1 second ago (within TTL)
     vi.mocked(fs.existsSync).mockReturnValue(true)
     vi.mocked(fs.readdirSync).mockReturnValue(['path.jsonl'] as any)
     vi.mocked(fs.readFileSync).mockReturnValue(
       '{"t":1000,"hit":500,"miss":100}\n' +
-        '{"t":2000,"type":"baseline","sessionID":"s1","input":100,"cacheRead":500}\n',
+        `{"t":${t1},"type":"baseline","sessionID":"s1","input":100,"cacheRead":500}\n`,
     )
     const result = loadBaselinesFromJsonl('/fake/path.jsonl')
     expect(result.size).toBe(1)
@@ -426,14 +488,36 @@ describe('loadBaselinesFromJsonl', () => {
   })
 
   it('skips malformed lines', () => {
+    const now = Date.now()
+    const t1 = now - 1000 // 1 second ago (within TTL)
     vi.mocked(fs.existsSync).mockReturnValue(true)
     vi.mocked(fs.readdirSync).mockReturnValue(['path.jsonl'] as any)
     vi.mocked(fs.readFileSync).mockReturnValue(
-      'NOT JSON\n{"t":2000,"type":"baseline","sessionID":"s1","input":100,"cacheRead":500}\n',
+      `NOT JSON\n{"t":${t1},"type":"baseline","sessionID":"s1","input":100,"cacheRead":500}\n`,
     )
     const result = loadBaselinesFromJsonl('/fake/path.jsonl')
     expect(result.size).toBe(1)
-    expect(result.get('s1')).toEqual({ input: 100, cacheRead: 500 })
+    expect(result.get('s1')).toEqual({
+      input: 100,
+      cacheRead: 500,
+      cacheWrite: 0,
+      output: 0,
+      lastAccess: t1,
+    })
+  })
+
+  it('B4: NaN/Infinity timestamps are set to 0 and filtered by TTL', () => {
+    vi.mocked(fs.existsSync).mockReturnValue(true)
+    vi.mocked(fs.readdirSync).mockReturnValue(['path.jsonl'] as any)
+    // NaN timestamps should be set to 0, making them look very old
+    // The TTL filter (Date.now() - 0 > SESSION_BASELINE_TTL_MS) will catch them
+    vi.mocked(fs.readFileSync).mockReturnValue(
+      '{"t":"not-a-number","type":"baseline","sessionID":"s-nan","input":100,"cacheRead":500}\n' +
+        '{"t":null,"type":"baseline","sessionID":"s-null","input":200,"cacheRead":600}\n',
+    )
+    const result = loadBaselinesFromJsonl('/fake/path.jsonl')
+    // NaN timestamps are set to 0, which is > 24h ago, so they're filtered by TTL
+    expect(result.size).toBe(0)
   })
 })
 
@@ -457,7 +541,7 @@ describe('appendUsageToJsonl prefixChanges', () => {
     vi.mocked(fs.existsSync).mockReturnValue(true)
     vi.mocked(fs.appendFileSync).mockImplementation(() => {})
 
-    appendUsageToJsonl('/fake/file.jsonl', 0, 0, 'fp123', undefined, 5)
+    appendUsageToJsonl('/fake/file.jsonl', 0, 0, undefined, undefined, 'fp123', undefined, 5)
 
     const record = JSON.parse(vi.mocked(fs.appendFileSync).mock.calls[0]?.[1] as string)
     expect(record.type).toBe('fingerprint')
@@ -468,7 +552,7 @@ describe('appendUsageToJsonl prefixChanges', () => {
     vi.mocked(fs.existsSync).mockReturnValue(true)
     vi.mocked(fs.appendFileSync).mockImplementation(() => {})
 
-    appendUsageToJsonl('/fake/file.jsonl', 100, 50, 'fp123', undefined, 5)
+    appendUsageToJsonl('/fake/file.jsonl', 100, 50, undefined, undefined, 'fp123', undefined, 5)
 
     const record = JSON.parse(vi.mocked(fs.appendFileSync).mock.calls[0]?.[1] as string)
     expect(record.type).toBeUndefined()
@@ -485,5 +569,63 @@ describe('loadStatsFromJsonl prefixChanges restoration', () => {
     )
     const stats = loadStatsFromJsonl('/fake/path.jsonl')
     expect(stats.prefixChanges).toBe(3)
+  })
+})
+
+describe('forEachJsonlRecord', () => {
+  it('calls callback for each record in JSONL files', async () => {
+    vi.mocked(fs.existsSync).mockReturnValue(true)
+    vi.mocked(fs.readdirSync).mockReturnValue(['usage.jsonl'] as any)
+    vi.mocked(fs.readFileSync).mockReturnValue(
+      '{"t":1000,"hit":100,"miss":50}\n{"t":2000,"hit":200,"miss":30}\n',
+    )
+    const { forEachJsonlRecord } = await import('./cache-stats.js')
+    const records: any[] = []
+    forEachJsonlRecord('/fake/usage.jsonl', (record) => records.push(record))
+    expect(records).toHaveLength(2)
+    expect(records[0].hit).toBe(100)
+    expect(records[1].hit).toBe(200)
+  })
+
+  it('skips malformed lines gracefully', async () => {
+    vi.mocked(fs.existsSync).mockReturnValue(true)
+    vi.mocked(fs.readdirSync).mockReturnValue(['usage.jsonl'] as any)
+    vi.mocked(fs.readFileSync).mockReturnValue(
+      '{"t":1000,"hit":100}\nNOT JSON\n{"t":2000,"hit":200}\n',
+    )
+    const { forEachJsonlRecord } = await import('./cache-stats.js')
+    const records: any[] = []
+    forEachJsonlRecord('/fake/usage.jsonl', (record) => records.push(record))
+    expect(records).toHaveLength(2)
+  })
+
+  it('handles rotated files', async () => {
+    vi.mocked(fs.existsSync).mockReturnValue(true)
+    vi.mocked(fs.readdirSync).mockReturnValue([
+      'usage.jsonl',
+      'usage.jsonl.1000',
+      'usage.jsonl.2000',
+    ] as any)
+    vi.mocked(fs.readFileSync)
+      .mockReturnValueOnce('{"t":3000,"hit":300}\n')
+      .mockReturnValueOnce('{"t":1000,"hit":100}\n')
+      .mockReturnValueOnce('{"t":2000,"hit":200}\n')
+    const { forEachJsonlRecord } = await import('./cache-stats.js')
+    const records: any[] = []
+    forEachJsonlRecord('/fake/usage.jsonl', (record) => records.push(record))
+    expect(records).toHaveLength(3)
+    // Should process in order: oldest first (sorted by name)
+    // Files are sorted alphabetically: usage.jsonl, usage.jsonl.1000, usage.jsonl.2000
+    expect(records[0].t).toBe(3000)
+    expect(records[1].t).toBe(1000)
+    expect(records[2].t).toBe(2000)
+  })
+
+  it('returns early if directory does not exist', async () => {
+    vi.mocked(fs.existsSync).mockReturnValue(false)
+    const { forEachJsonlRecord } = await import('./cache-stats.js')
+    const records: any[] = []
+    forEachJsonlRecord('/fake/usage.jsonl', (record) => records.push(record))
+    expect(records).toHaveLength(0)
   })
 })
