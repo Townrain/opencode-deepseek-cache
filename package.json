@@ -5,6 +5,16 @@
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "keywords": [
+    "opencode",
+    "deepseek",
+    "cache",
+    "optimization",
+    "ai",
+    "plugin",
+    "typescript",
+    "performance"
+  ],
   "scripts": {
     "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc",
     "dev": "tsc --watch",
@@ -29,4 +39,3 @@
   },
   "license": "MIT"
 }
-
